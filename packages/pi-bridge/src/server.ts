@@ -112,7 +112,7 @@ app.get('/info', asyncHandler(async (req, res) => {
     },
     camera: {
       onvif: config.onvif.enabled,
-      host: config.onvif.host || 'N/A',
+      host: config.onvif.host || config.camera.host || 'N/A',
       stream: streamInfo,
     },
     status: {
@@ -1098,7 +1098,7 @@ function getDashboardHtml(): string {
             </div>
             <div class="stat">
               <span class="stat-label">Camera IP</span>
-              <span class="stat-value">${config.onvif.host || 'N/A'}</span>
+              <span class="stat-value">${config.onvif.host || config.camera.host || 'N/A'}</span>
             </div>
             <div class="stat">
               <span class="stat-label">PTZ Support</span>
@@ -1565,8 +1565,10 @@ function getDashboardHtml(): string {
       try {
         const res = await fetch('/api/camera/time');
         if (!res.ok) {
-          document.getElementById('time-sync-text').textContent = 'Time sync: N/A';
+          // ONVIF not configured - this is normal for RTSP-only setups
+          document.getElementById('time-sync-text').textContent = 'RTSP mode (no sync)';
           document.getElementById('time-sync-dot').className = 'dot';
+          document.getElementById('time-alert').style.display = 'none';
           return;
         }
         

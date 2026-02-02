@@ -27,12 +27,27 @@ function getDeviceId(): string {
   return newId;
 }
 
+// Extract host from RTSP URL
+function extractHostFromRtsp(rtspUrl: string): string {
+  try {
+    // Handle rtsp://user:pass@host:port/path format
+    const match = rtspUrl.match(/rtsp:\/\/(?:[^@]+@)?([^:\/]+)/);
+    return match ? match[1] : '';
+  } catch {
+    return '';
+  }
+}
+
 export const config = {
   // Camera
   camera: {
     rtspUrl: process.env.CAMERA_RTSP_URL || '',
     name: process.env.CAMERA_NAME || 'Pi Camera',
     location: process.env.CAMERA_LOCATION || '',
+    // Extract host from RTSP URL for display when ONVIF is disabled
+    get host(): string {
+      return extractHostFromRtsp(this.rtspUrl);
+    },
   },
   
   // ONVIF
