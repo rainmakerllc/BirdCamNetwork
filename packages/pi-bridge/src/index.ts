@@ -1,24 +1,40 @@
 #!/usr/bin/env node
 
+/**
+ * BirdCam Pi Bridge - Main Entry Point
+ * 
+ * Connects IP cameras to the BirdCam Network with:
+ * - ONVIF discovery and connection
+ * - RTSP to HLS transcoding
+ * - Motion detection with clip recording
+ * - PTZ camera control
+ * - Web dashboard for management
+ * - Firebase integration for cloud sync
+ */
+
 import { config, validateConfig } from './config.js';
-import { initFirebase, registerCamera, sendHeartbeat, updateCameraStatus, uploadClip, saveDetection } from './firebase.js';
+import { initFirebase, registerCamera, sendHeartbeat, updateCameraStatus } from './firebase.js';
 import { startStreaming, stopStreaming, probeStream, isStreaming, setRtspUrl } from './streamer.js';
-import { startServer } from './server.js';
+import { startServer, setPtzController } from './server.js';
 import { startTunnel, startQuickTunnel, stopTunnel, getPublicUrl } from './tunnel.js';
 import { discoverCameras, connectCamera, getBestStreamUrl, autoConnect, type OnvifDevice } from './onvif.js';
-import { initDetector, setDetectorSource, onBirdDetected, startDetection, stopDetection, type BirdDetection } from './detector.js';
-import { initRecorder, setRecorderSource, recordClip, captureSnapshot, getClipBuffer, getThumbnailBuffer } from './recorder.js';
+import { getMotionDetector, stopMotionDetection, type MotionEvent } from './motion.js';
+import { getRecorder } from './recorder.js';
+import { createPtzController, type PtzController } from './ptz.js';
 
 console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║               BirdCam Network - Pi Bridge                    ║
-║                   Stream Relay v1.0.0                        ║
+║                   Stream Relay v1.1.0                        ║
+║                                                              ║
+║   Features: ONVIF • HLS • Motion • PTZ • Recording • Web     ║
 ╚══════════════════════════════════════════════════════════════╝
 `);
 
 let cameraId: string | null = null;
 let heartbeatInterval: NodeJS.Timeout | null = null;
 let onvifDevice: OnvifDevice | null = null;
+let ptzController: PtzController | null = null;
 
 async function resolveRtspUrl(): Promise<string> {
   // If ONVIF is enabled, discover/connect to get RTSP URL
@@ -78,45 +94,126 @@ async function resolveRtspUrl(): Promise<string> {
   return config.camera.rtspUrl;
 }
 
+async function initializePtz(): Promise<void> {
+  if (!config.onvif.enabled || !onvifDevice) {
+    console.log('[Main] PTZ: Not available (ONVIF not enabled)');
+    return;
+  }
+
+  try {
+    const profileToken = onvifDevice.profiles[0]?.token;
+    if (!profileToken) {
+      console.log('[Main] PTZ: No profile token available');
+      return;
+    }
+
+    ptzController = createPtzController(
+      config.onvif.host,
+      config.onvif.port,
+      config.onvif.username,
+      config.onvif.password,
+      profileToken
+    );
+
+    const capabilities = await ptzController.getCapabilities();
+    if (capabilities.supported) {
+      console.log('[Main] PTZ: Enabled');
+      setPtzController(ptzController);
+    } else {
+      console.log('[Main] PTZ: Camera does not support PTZ');
+      ptzController = null;
+    }
+  } catch (err) {
+    console.warn('[Main] PTZ: Failed to initialize:', (err as Error).message);
+    ptzController = null;
+  }
+}
+
+async function initializeMotionDetection(rtspUrl: string): Promise<void> {
+  if (process.env.MOTION_DETECTION_ENABLED === 'false') {
+    console.log('[Main] Motion detection: Disabled by config');
+    return;
+  }
+
+  const recorder = getRecorder({
+    clipsDir: process.env.CLIPS_DIR || '/var/birdcam/clips',
+    snapshotsDir: process.env.SNAPSHOTS_DIR || '/var/birdcam/snapshots',
+    retentionDays: parseInt(process.env.RETENTION_DAYS || '7', 10),
+    maxStorageMb: parseInt(process.env.MAX_STORAGE_MB || '10000', 10),
+  });
+  recorder.setRtspUrl(rtspUrl);
+
+  const motion = getMotionDetector({
+    enabled: true,
+    sensitivity: parseInt(process.env.MOTION_SENSITIVITY || '50', 10),
+    cooldownMs: parseInt(process.env.MOTION_COOLDOWN_MS || '5000', 10),
+  });
+
+  // On motion, start recording and capture snapshot
+  motion.on('motion', async (event: MotionEvent) => {
+    console.log(`[Main] Motion detected! Confidence: ${event.confidence.toFixed(1)}%`);
+    
+    // Capture snapshot
+    const snapshot = await recorder.captureSnapshot('motion');
+    if (snapshot) {
+      event.snapshotPath = snapshot.path;
+    }
+    
+    // Start recording if not already
+    if (!recorder.isRecording()) {
+      await recorder.startRecording('motion');
+      
+      // Auto-stop after configured duration
+      setTimeout(() => {
+        if (recorder.isRecording()) {
+          recorder.stopRecording();
+        }
+      }, 15000); // 15 second clips
+    }
+    
+    // Update Firebase if connected
+    if (cameraId) {
+      try {
+        await updateCameraStatus(cameraId, 'motion', {
+          confidence: event.confidence,
+          snapshot: snapshot?.path,
+        });
+      } catch {}
+    }
+  });
+
+  motion.on('motionEnd', () => {
+    console.log('[Main] Motion ended');
+  });
+
+  // Start motion detection
+  try {
+    await motion.start(rtspUrl);
+    console.log('[Main] Motion detection: Enabled');
+  } catch (err) {
+    console.warn('[Main] Motion detection: Failed to start:', (err as Error).message);
+  }
+}
+
 async function main() {
   console.log(`[Main] Device ID: ${config.deviceId}`);
   console.log(`[Main] Camera: ${config.camera.name}`);
   
-  // Validate configuration (allow missing Firebase in debug mode)
+  // Validate configuration
   const errors = validateConfig();
-  const firebaseErrors = errors.filter(e => e.toLowerCase().includes('firebase'));
-  const otherErrors = errors.filter(e => !e.toLowerCase().includes('firebase'));
-  
-  if (otherErrors.length > 0) {
+  if (errors.length > 0) {
     console.error('[Main] Configuration errors:');
-    otherErrors.forEach(e => console.error(`  - ${e}`));
+    errors.forEach(e => console.error(`  - ${e}`));
     process.exit(1);
   }
   
-  // Initialize Firebase (optional in debug mode)
-  let firebaseEnabled = true;
-  if (firebaseErrors.length > 0) {
-    if (config.debug) {
-      console.warn('[Main] Firebase not configured - running in local-only mode');
-      console.warn('[Main] Camera registration and cloud sync disabled');
-      firebaseEnabled = false;
-    } else {
-      console.error('[Main] Configuration errors:');
-      firebaseErrors.forEach(e => console.error(`  - ${e}`));
-      process.exit(1);
-    }
-  } else {
-    console.log('[Main] Initializing Firebase...');
-    try {
-      initFirebase();
-    } catch (err) {
-      if (config.debug) {
-        console.warn('[Main] Firebase init failed - running in local-only mode:', (err as Error).message);
-        firebaseEnabled = false;
-      } else {
-        throw err;
-      }
-    }
+  // Initialize Firebase
+  console.log('[Main] Initializing Firebase...');
+  try {
+    initFirebase();
+  } catch (err) {
+    console.warn('[Main] Firebase init failed:', (err as Error).message);
+    console.warn('[Main] Continuing without cloud sync...');
   }
   
   // Resolve RTSP URL (from config or ONVIF)
@@ -140,8 +237,11 @@ async function main() {
     console.warn('[Main] Could not probe stream - continuing anyway');
   }
   
+  // Initialize PTZ control
+  await initializePtz();
+  
   // Start HLS server
-  console.log('[Main] Starting HLS server...');
+  console.log('[Main] Starting web server...');
   const localUrl = await startServer();
   
   // Start tunnel
@@ -168,99 +268,30 @@ async function main() {
   // Wait for stream to be ready
   await new Promise(resolve => setTimeout(resolve, 3000));
   
-  // Register camera with BirdCam Network
-  if (firebaseEnabled) {
-    console.log('[Main] Registering with BirdCam Network...');
-    try {
-      cameraId = await registerCamera(
-        '', // userId will be set when user claims the camera
-        `${publicUrl}/stream.m3u8`,
-        `${localUrl}/stream.m3u8`
-      );
-      console.log(`[Main] Registered camera: ${cameraId}`);
-      
-      // Update with stream info if available
-      if (streamInfo) {
-        await updateCameraStatus(cameraId, 'active', {
-          codec: streamInfo.codec,
-          resolution: streamInfo.resolution,
-        });
-      }
-    } catch (err) {
-      console.error('[Main] Failed to register camera:', (err as Error).message);
-    }
-  } else {
-    console.log('[Main] Skipping cloud registration (local-only mode)');
-  }
+  // Initialize motion detection
+  await initializeMotionDetection(rtspUrl);
   
-  // Initialize bird detection
-  if (config.detection.enabled) {
-    console.log('[Main] Setting up bird detection...');
-    initDetector({
-      minConfidence: config.detection.minConfidence,
-      analysisInterval: config.detection.analysisInterval,
-      sampleDuration: config.detection.sampleDuration,
-      latitude: config.detection.latitude,
-      longitude: config.detection.longitude,
-      locale: config.detection.locale,
-    });
-    setDetectorSource(rtspUrl);
+  // Register camera with BirdCam Network
+  console.log('[Main] Registering with BirdCam Network...');
+  try {
+    cameraId = await registerCamera(
+      '', // userId will be set when user claims the camera
+      `${publicUrl}/stream.m3u8`,
+      `${localUrl}/stream.m3u8`
+    );
+    console.log(`[Main] Registered camera: ${cameraId}`);
     
-    // Initialize clip recording
-    if (config.recording.enabled) {
-      console.log('[Main] Setting up clip recording...');
-      initRecorder({
-        clipDuration: config.recording.clipDuration,
-        preBuffer: config.recording.preBuffer,
-        outputDir: config.recording.outputDir,
-        maxClips: config.recording.maxClips,
-        maxStorageMB: config.recording.maxStorageMB,
-        generateThumbnail: config.recording.generateThumbnail,
+    // Update with stream info if available
+    if (streamInfo) {
+      await updateCameraStatus(cameraId, 'active', {
+        codec: streamInfo.codec,
+        resolution: streamInfo.resolution,
+        ptzSupported: ptzController !== null,
       });
-      setRecorderSource(rtspUrl);
     }
-    
-    // Handle bird detections
-    onBirdDetected(async (detection: BirdDetection) => {
-      console.log(`[Main] 🐦 Bird detected: ${detection.species} (${(detection.confidence * 100).toFixed(1)}%)`);
-      
-      // Record clip if enabled
-      if (config.recording.enabled) {
-        try {
-          const clip = await recordClip('bird_detection', {
-            species: detection.species,
-            confidence: detection.confidence,
-          });
-          
-          // Upload to Firebase if we have a camera ID
-          if (cameraId) {
-            console.log('[Main] Uploading detection to cloud...');
-            try {
-              const clipBuffer = getClipBuffer(clip.id);
-              const thumbnailBuffer = clip.thumbnailPath ? getThumbnailBuffer(clip.id) : undefined;
-              
-              await saveDetection(cameraId, {
-                species: detection.species,
-                scientificName: detection.scientificName,
-                confidence: detection.confidence,
-                clipId: clip.id,
-                clipBuffer,
-                thumbnailBuffer,
-                timestamp: detection.timestamp,
-              });
-              console.log('[Main] Detection uploaded successfully');
-            } catch (uploadErr) {
-              console.error('[Main] Upload failed:', (uploadErr as Error).message);
-            }
-          }
-        } catch (recordErr) {
-          console.error('[Main] Recording failed:', (recordErr as Error).message);
-        }
-      }
-    });
-    
-    // Start detection
-    await startDetection();
+  } catch (err) {
+    console.warn('[Main] Failed to register camera:', (err as Error).message);
+    console.warn('[Main] Continuing without cloud registration...');
   }
   
   // Start heartbeat
@@ -277,20 +308,26 @@ async function main() {
     }
   }, 30000); // Every 30 seconds
   
-  // Ready!
+  // Print startup summary
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('  🐦 BirdCam Pi Bridge is running!');
   console.log('');
-  console.log(`  Local:  ${localUrl}`);
+  console.log(`  📺 Dashboard: ${localUrl}`);
   if (publicUrl !== localUrl) {
-    console.log(`  Public: ${publicUrl}`);
+    console.log(`  🌍 Public:    ${publicUrl}`);
   }
-  console.log(`  Stream: ${publicUrl}/stream.m3u8`);
+  console.log(`  🎥 Stream:    ${publicUrl}/stream.m3u8`);
+  console.log('');
+  console.log('  Features:');
+  console.log(`    • Streaming:   ${isStreaming() ? '✅ Active' : '⏳ Starting...'}`);
+  console.log(`    • PTZ Control: ${ptzController ? '✅ Enabled' : '❌ Not available'}`);
+  console.log(`    • Motion:      ${getMotionDetector().isRunning() ? '✅ Enabled' : '❌ Disabled'}`);
+  console.log(`    • Recording:   ✅ Ready`);
   console.log('');
   if (cameraId) {
-    console.log(`  Camera ID: ${cameraId}`);
-    console.log('  Add this camera in your BirdCam dashboard to start watching!');
+    console.log(`  🔗 Camera ID: ${cameraId}`);
+    console.log('     Add this camera in your BirdCam dashboard!');
   }
   console.log('═══════════════════════════════════════════════════════════════');
 }
@@ -303,8 +340,8 @@ function shutdown(signal: string) {
     clearInterval(heartbeatInterval);
   }
   
-  // Stop detection
-  stopDetection();
+  // Stop motion detection
+  stopMotionDetection();
   
   // Update camera status to offline
   if (cameraId) {
@@ -315,7 +352,7 @@ function shutdown(signal: string) {
   stopTunnel();
   
   setTimeout(() => {
-    console.log('[Main] Goodbye!');
+    console.log('[Main] Goodbye! 🐦');
     process.exit(0);
   }, 1000);
 }

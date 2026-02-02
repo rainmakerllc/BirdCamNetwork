@@ -29,13 +29,14 @@ export interface CameraRegistration {
   id: string;
   deviceId: string;
   name: string;
-  status: 'pending' | 'active' | 'offline' | 'error';
+  status: 'pending' | 'active' | 'offline' | 'error' | 'motion';
   streamUrl?: string;
   localUrl: string;
   locationLabel?: string;
   streamType: 'rtsp' | 'hls';
   codec?: string;
   resolution?: string;
+  ptzSupported?: boolean;
   isPublic: boolean;
   lastHeartbeat: admin.firestore.Timestamp;
   createdAt: admin.firestore.Timestamp;
@@ -96,7 +97,7 @@ export async function registerCamera(
 export async function updateCameraStatus(
   cameraId: string,
   status: CameraRegistration['status'],
-  extra?: Partial<CameraRegistration>
+  extra?: Record<string, any>
 ): Promise<void> {
   const db = getFirestore();
   await db.collection('cameras').doc(cameraId).update({

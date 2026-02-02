@@ -1,345 +1,401 @@
 /**
- * Clip Recorder
+ * Recording Module
  * 
- * Captures video clips and snapshots when triggered (e.g., bird detection).
- * Manages a rolling buffer for pre-detection footage.
+ * Handles video clip recording and snapshot capture.
+ * Supports triggered recording (motion events) and manual capture.
  */
 
-import ffmpeg from 'fluent-ffmpeg';
-import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { spawn, ChildProcess } from 'child_process';
+import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'fs';
+import { join, basename } from 'path';
 import { config } from './config.js';
 
-export interface ClipMetadata {
+export interface RecordingConfig {
+  clipsDir: string;
+  snapshotsDir: string;
+  preBufferSeconds: number;    // Seconds to include before trigger
+  postBufferSeconds: number;   // Seconds to record after trigger
+  maxClipDurationSeconds: number;
+  retentionDays: number;       // Auto-delete clips older than this
+  maxStorageMb: number;        // Max storage before cleanup
+}
+
+export interface ClipInfo {
   id: string;
+  path: string;
   startTime: Date;
-  endTime: Date;
   duration: number;
-  filePath: string;
-  thumbnailPath?: string;
-  trigger: string;
-  species?: string;
-  confidence?: number;
-  fileSize: number;
+  trigger: 'motion' | 'manual' | 'scheduled';
+  size: number;
+  thumbnail?: string;
 }
 
-export interface RecorderOptions {
-  clipDuration: number;       // Total clip duration in seconds
-  preBuffer: number;          // Seconds before trigger to include
-  outputDir: string;          // Where to store clips
-  maxClips: number;           // Maximum clips to keep (auto-cleanup)
-  maxStorageMB: number;       // Maximum storage in MB
-  generateThumbnail: boolean; // Generate thumbnail from clip
+export interface SnapshotInfo {
+  id: string;
+  path: string;
+  timestamp: Date;
+  size: number;
 }
 
-const defaultOptions: RecorderOptions = {
-  clipDuration: 15,
-  preBuffer: 5,
-  outputDir: './clips',
-  maxClips: 100,
-  maxStorageMB: 1024,  // 1GB
-  generateThumbnail: true,
+const DEFAULT_CONFIG: RecordingConfig = {
+  clipsDir: '/var/birdcam/clips',
+  snapshotsDir: '/var/birdcam/snapshots',
+  preBufferSeconds: 5,
+  postBufferSeconds: 10,
+  maxClipDurationSeconds: 60,
+  retentionDays: 7,
+  maxStorageMb: 10000, // 10GB
 };
 
-let options: RecorderOptions = defaultOptions;
-let rtspUrl: string = '';
-let isRecording = false;
+class Recorder {
+  private config: RecordingConfig;
+  private rtspUrl: string = '';
+  private activeRecording: ChildProcess | null = null;
+  private recordingStartTime: Date | null = null;
+  private recordingId: string | null = null;
 
-/**
- * Initialize the recorder
- */
-export function initRecorder(opts: Partial<RecorderOptions> = {}): void {
-  options = { ...defaultOptions, ...opts };
-  
-  // Ensure output directory exists
-  mkdirSync(options.outputDir, { recursive: true });
-  mkdirSync(join(options.outputDir, 'thumbnails'), { recursive: true });
-  
-  console.log('[Recorder] Initialized with options:', {
-    clipDuration: `${options.clipDuration}s`,
-    preBuffer: `${options.preBuffer}s`,
-    outputDir: options.outputDir,
-    maxClips: options.maxClips,
-    maxStorageMB: options.maxStorageMB,
-  });
-  
-  // Initial cleanup
-  cleanupOldClips();
-}
-
-/**
- * Set the RTSP URL for recording
- */
-export function setRecorderSource(url: string): void {
-  rtspUrl = url;
-}
-
-/**
- * Check if currently recording
- */
-export function isCurrentlyRecording(): boolean {
-  return isRecording;
-}
-
-/**
- * Record a clip starting now
- */
-export async function recordClip(trigger: string = 'manual', metadata: Record<string, any> = {}): Promise<ClipMetadata> {
-  if (!rtspUrl) {
-    throw new Error('No RTSP URL set - call setRecorderSource first');
+  constructor(recordingConfig?: Partial<RecordingConfig>) {
+    this.config = { ...DEFAULT_CONFIG, ...recordingConfig };
+    this.ensureDirectories();
   }
-  
-  if (isRecording) {
-    console.log('[Recorder] Already recording, skipping');
-    throw new Error('Already recording');
+
+  private ensureDirectories(): void {
+    if (!existsSync(this.config.clipsDir)) {
+      mkdirSync(this.config.clipsDir, { recursive: true });
+    }
+    if (!existsSync(this.config.snapshotsDir)) {
+      mkdirSync(this.config.snapshotsDir, { recursive: true });
+    }
   }
-  
-  isRecording = true;
-  
-  const id = generateClipId();
-  const startTime = new Date();
-  const filePath = join(options.outputDir, `${id}.mp4`);
-  const thumbnailPath = join(options.outputDir, 'thumbnails', `${id}.jpg`);
-  
-  console.log(`[Recorder] Recording clip: ${id} (${options.clipDuration}s)`);
-  
-  try {
-    // Record the clip
-    await captureClip(filePath, options.clipDuration);
+
+  setRtspUrl(url: string): void {
+    this.rtspUrl = url;
+  }
+
+  /**
+   * Capture a snapshot from the stream
+   */
+  async captureSnapshot(reason: string = 'manual'): Promise<SnapshotInfo | null> {
+    if (!this.rtspUrl) {
+      console.error('[Recorder] No RTSP URL configured');
+      return null;
+    }
+
+    const id = `snap_${Date.now()}`;
+    const filename = `${id}.jpg`;
+    const filepath = join(this.config.snapshotsDir, filename);
+
+    console.log(`[Recorder] Capturing snapshot: ${reason}`);
+
+    return new Promise((resolve) => {
+      const ffmpeg = spawn(config.ffmpegPath, [
+        '-rtsp_transport', 'tcp',
+        '-i', this.rtspUrl,
+        '-vframes', '1',
+        '-q:v', '2',
+        '-y',
+        filepath
+      ]);
+
+      let error = '';
+
+      ffmpeg.stderr.on('data', (data) => {
+        error += data.toString();
+      });
+
+      ffmpeg.on('close', (code) => {
+        if (code === 0 && existsSync(filepath)) {
+          const stats = statSync(filepath);
+          const snapshot: SnapshotInfo = {
+            id,
+            path: filepath,
+            timestamp: new Date(),
+            size: stats.size,
+          };
+          console.log(`[Recorder] Snapshot saved: ${filepath}`);
+          resolve(snapshot);
+        } else {
+          console.error(`[Recorder] Snapshot failed: ${error}`);
+          resolve(null);
+        }
+      });
+
+      // Timeout after 10 seconds
+      setTimeout(() => {
+        ffmpeg.kill('SIGTERM');
+      }, 10000);
+    });
+  }
+
+  /**
+   * Start recording a clip
+   */
+  async startRecording(trigger: 'motion' | 'manual' | 'scheduled' = 'manual'): Promise<string | null> {
+    if (!this.rtspUrl) {
+      console.error('[Recorder] No RTSP URL configured');
+      return null;
+    }
+
+    if (this.activeRecording) {
+      console.log('[Recorder] Recording already in progress');
+      return this.recordingId;
+    }
+
+    const id = `clip_${Date.now()}`;
+    const filename = `${id}.mp4`;
+    const filepath = join(this.config.clipsDir, filename);
+    const thumbnailPath = join(this.config.clipsDir, `${id}_thumb.jpg`);
+
+    console.log(`[Recorder] Starting recording: ${trigger}`);
+
+    this.recordingId = id;
+    this.recordingStartTime = new Date();
+
+    // Record with copy codec (no transcoding) for efficiency
+    this.activeRecording = spawn(config.ffmpegPath, [
+      '-rtsp_transport', 'tcp',
+      '-i', this.rtspUrl,
+      '-c', 'copy',
+      '-t', String(this.config.maxClipDurationSeconds),
+      '-movflags', '+faststart',
+      '-y',
+      filepath
+    ]);
+
+    this.activeRecording.on('close', async (code) => {
+      if (code === 0 && existsSync(filepath)) {
+        // Generate thumbnail
+        await this.generateThumbnail(filepath, thumbnailPath);
+        
+        const stats = statSync(filepath);
+        console.log(`[Recorder] Clip saved: ${filepath} (${(stats.size / 1024 / 1024).toFixed(2)}MB)`);
+      } else {
+        console.error(`[Recorder] Recording failed with code: ${code}`);
+      }
+      
+      this.activeRecording = null;
+      this.recordingStartTime = null;
+      this.recordingId = null;
+    });
+
+    // Auto-cleanup old files
+    this.cleanupOldFiles();
+
+    return id;
+  }
+
+  /**
+   * Stop the current recording
+   */
+  stopRecording(): void {
+    if (this.activeRecording) {
+      console.log('[Recorder] Stopping recording...');
+      this.activeRecording.kill('SIGINT'); // Graceful stop to finalize file
+    }
+  }
+
+  /**
+   * Generate a thumbnail from a video file
+   */
+  private async generateThumbnail(videoPath: string, thumbnailPath: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const ffmpeg = spawn(config.ffmpegPath, [
+        '-i', videoPath,
+        '-vframes', '1',
+        '-vf', 'scale=320:-1',
+        '-q:v', '5',
+        '-y',
+        thumbnailPath
+      ]);
+
+      ffmpeg.on('close', (code) => {
+        resolve(code === 0);
+      });
+
+      setTimeout(() => {
+        ffmpeg.kill('SIGTERM');
+        resolve(false);
+      }, 5000);
+    });
+  }
+
+  /**
+   * List all recorded clips
+   */
+  listClips(): ClipInfo[] {
+    const clips: ClipInfo[] = [];
     
-    const endTime = new Date();
-    const stats = statSync(filePath);
+    if (!existsSync(this.config.clipsDir)) return clips;
+
+    const files = readdirSync(this.config.clipsDir)
+      .filter(f => f.endsWith('.mp4'))
+      .sort()
+      .reverse(); // Newest first
+
+    for (const file of files) {
+      const filepath = join(this.config.clipsDir, file);
+      const stats = statSync(filepath);
+      const id = file.replace('.mp4', '');
+      const thumbnailPath = join(this.config.clipsDir, `${id}_thumb.jpg`);
+
+      clips.push({
+        id,
+        path: filepath,
+        startTime: stats.birthtime,
+        duration: 0, // Would need ffprobe to get actual duration
+        trigger: 'manual',
+        size: stats.size,
+        thumbnail: existsSync(thumbnailPath) ? thumbnailPath : undefined,
+      });
+    }
+
+    return clips;
+  }
+
+  /**
+   * List all snapshots
+   */
+  listSnapshots(): SnapshotInfo[] {
+    const snapshots: SnapshotInfo[] = [];
     
-    // Generate thumbnail
-    if (options.generateThumbnail) {
-      try {
-        await generateThumbnail(filePath, thumbnailPath);
-      } catch (err) {
-        console.warn('[Recorder] Thumbnail generation failed:', (err as Error).message);
+    if (!existsSync(this.config.snapshotsDir)) return snapshots;
+
+    const files = readdirSync(this.config.snapshotsDir)
+      .filter(f => f.endsWith('.jpg'))
+      .sort()
+      .reverse();
+
+    for (const file of files) {
+      const filepath = join(this.config.snapshotsDir, file);
+      const stats = statSync(filepath);
+      
+      snapshots.push({
+        id: file.replace('.jpg', ''),
+        path: filepath,
+        timestamp: stats.birthtime,
+        size: stats.size,
+      });
+    }
+
+    return snapshots;
+  }
+
+  /**
+   * Delete a clip by ID
+   */
+  deleteClip(id: string): boolean {
+    const filepath = join(this.config.clipsDir, `${id}.mp4`);
+    const thumbnailPath = join(this.config.clipsDir, `${id}_thumb.jpg`);
+
+    if (existsSync(filepath)) {
+      unlinkSync(filepath);
+      if (existsSync(thumbnailPath)) {
+        unlinkSync(thumbnailPath);
+      }
+      console.log(`[Recorder] Deleted clip: ${id}`);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Cleanup old files based on retention policy
+   */
+  cleanupOldFiles(): void {
+    const now = Date.now();
+    const maxAge = this.config.retentionDays * 24 * 60 * 60 * 1000;
+    let totalSize = 0;
+    const files: Array<{ path: string; time: number; size: number }> = [];
+
+    // Gather all files with their sizes and times
+    for (const dir of [this.config.clipsDir, this.config.snapshotsDir]) {
+      if (!existsSync(dir)) continue;
+      
+      for (const file of readdirSync(dir)) {
+        const filepath = join(dir, file);
+        const stats = statSync(filepath);
+        totalSize += stats.size;
+        files.push({
+          path: filepath,
+          time: stats.mtimeMs,
+          size: stats.size,
+        });
       }
     }
-    
-    const clip: ClipMetadata = {
-      id,
-      startTime,
-      endTime,
-      duration: options.clipDuration,
-      filePath,
-      thumbnailPath: existsSync(thumbnailPath) ? thumbnailPath : undefined,
-      trigger,
-      fileSize: stats.size,
-      ...metadata,
-    };
-    
-    console.log(`[Recorder] Clip saved: ${id} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
-    
-    // Cleanup old clips if needed
-    await cleanupOldClips();
-    
-    return clip;
-    
-  } finally {
-    isRecording = false;
-  }
-}
 
-/**
- * Capture a snapshot (single frame)
- */
-export async function captureSnapshot(trigger: string = 'manual'): Promise<{
-  id: string;
-  filePath: string;
-  timestamp: Date;
-}> {
-  if (!rtspUrl) {
-    throw new Error('No RTSP URL set');
-  }
-  
-  const id = `snap_${Date.now()}`;
-  const filePath = join(options.outputDir, 'thumbnails', `${id}.jpg`);
-  
-  return new Promise((resolve, reject) => {
-    ffmpeg(rtspUrl)
-      .inputOptions([
-        '-rtsp_transport tcp',
-        '-frames:v 1',
-      ])
-      .outputOptions([
-        '-q:v 2',  // High quality JPEG
-      ])
-      .output(filePath)
-      .on('end', () => {
-        console.log(`[Recorder] Snapshot saved: ${id}`);
-        resolve({
-          id,
-          filePath,
-          timestamp: new Date(),
-        });
-      })
-      .on('error', reject)
-      .run();
-  });
-}
+    // Sort by age (oldest first)
+    files.sort((a, b) => a.time - b.time);
 
-/**
- * Capture video clip
- */
-function captureClip(outputPath: string, duration: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    ffmpeg(rtspUrl)
-      .inputOptions([
-        '-rtsp_transport tcp',
-        '-t', duration.toString(),
-      ])
-      .outputOptions([
-        '-c:v libx264',
-        '-preset fast',
-        '-crf 23',
-        '-c:a aac',
-        '-b:a 128k',
-        '-movflags +faststart',  // Enable streaming
-      ])
-      .output(outputPath)
-      .on('progress', (progress) => {
-        if (config.debug && progress.timemark) {
-          console.log(`[Recorder] Recording: ${progress.timemark}`);
+    // Delete files that are too old
+    for (const file of files) {
+      if (now - file.time > maxAge) {
+        unlinkSync(file.path);
+        totalSize -= file.size;
+        console.log(`[Recorder] Deleted old file: ${basename(file.path)}`);
+      }
+    }
+
+    // Delete files if over storage limit (oldest first)
+    const maxBytes = this.config.maxStorageMb * 1024 * 1024;
+    for (const file of files) {
+      if (totalSize <= maxBytes) break;
+      if (!existsSync(file.path)) continue;
+      
+      unlinkSync(file.path);
+      totalSize -= file.size;
+      console.log(`[Recorder] Deleted for space: ${basename(file.path)}`);
+    }
+  }
+
+  /**
+   * Get storage statistics
+   */
+  getStorageStats(): { usedMb: number; maxMb: number; clipCount: number; snapshotCount: number } {
+    let totalSize = 0;
+    let clipCount = 0;
+    let snapshotCount = 0;
+
+    if (existsSync(this.config.clipsDir)) {
+      for (const file of readdirSync(this.config.clipsDir)) {
+        if (file.endsWith('.mp4')) {
+          clipCount++;
+          totalSize += statSync(join(this.config.clipsDir, file)).size;
         }
-      })
-      .on('end', () => resolve())
-      .on('error', reject)
-      .run();
-  });
-}
-
-/**
- * Generate thumbnail from video clip
- */
-function generateThumbnail(videoPath: string, outputPath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    ffmpeg(videoPath)
-      .screenshots({
-        timestamps: ['50%'],  // Middle of clip
-        filename: outputPath.split(/[\\/]/).pop()!,
-        folder: outputPath.split(/[\\/]/).slice(0, -1).join('/'),
-        size: '640x360',
-      })
-      .on('end', () => resolve())
-      .on('error', reject);
-  });
-}
-
-/**
- * Generate unique clip ID
- */
-function generateClipId(): string {
-  const now = new Date();
-  const date = now.toISOString().split('T')[0].replace(/-/g, '');
-  const time = now.toTimeString().split(' ')[0].replace(/:/g, '');
-  const rand = Math.random().toString(36).substring(2, 6);
-  return `clip_${date}_${time}_${rand}`;
-}
-
-/**
- * Cleanup old clips to stay within limits
- */
-async function cleanupOldClips(): Promise<void> {
-  const clips = getClipList();
-  
-  // Check total count
-  while (clips.length > options.maxClips) {
-    const oldest = clips.shift();
-    if (oldest) {
-      deleteClip(oldest.id);
+      }
     }
-  }
-  
-  // Check total size
-  let totalSize = clips.reduce((sum, c) => sum + c.size, 0);
-  const maxSize = options.maxStorageMB * 1024 * 1024;
-  
-  while (totalSize > maxSize && clips.length > 0) {
-    const oldest = clips.shift();
-    if (oldest) {
-      deleteClip(oldest.id);
-      totalSize -= oldest.size;
+
+    if (existsSync(this.config.snapshotsDir)) {
+      for (const file of readdirSync(this.config.snapshotsDir)) {
+        if (file.endsWith('.jpg')) {
+          snapshotCount++;
+          totalSize += statSync(join(this.config.snapshotsDir, file)).size;
+        }
+      }
     }
+
+    return {
+      usedMb: Math.round(totalSize / 1024 / 1024),
+      maxMb: this.config.maxStorageMb,
+      clipCount,
+      snapshotCount,
+    };
+  }
+
+  isRecording(): boolean {
+    return this.activeRecording !== null;
+  }
+
+  getConfig(): RecordingConfig {
+    return { ...this.config };
   }
 }
 
-/**
- * Get list of all clips
- */
-function getClipList(): Array<{ id: string; path: string; size: number; mtime: Date }> {
-  if (!existsSync(options.outputDir)) {
-    return [];
-  }
-  
-  const files = readdirSync(options.outputDir)
-    .filter(f => f.endsWith('.mp4'))
-    .map(f => {
-      const path = join(options.outputDir, f);
-      const stats = statSync(path);
-      return {
-        id: f.replace('.mp4', ''),
-        path,
-        size: stats.size,
-        mtime: stats.mtime,
-      };
-    })
-    .sort((a, b) => a.mtime.getTime() - b.mtime.getTime());
-  
-  return files;
-}
+// Singleton instance
+let recorder: Recorder | null = null;
 
-/**
- * Delete a clip
- */
-function deleteClip(id: string): void {
-  const clipPath = join(options.outputDir, `${id}.mp4`);
-  const thumbPath = join(options.outputDir, 'thumbnails', `${id}.jpg`);
-  
-  try {
-    if (existsSync(clipPath)) {
-      unlinkSync(clipPath);
-    }
-    if (existsSync(thumbPath)) {
-      unlinkSync(thumbPath);
-    }
-    console.log(`[Recorder] Deleted old clip: ${id}`);
-  } catch (err) {
-    console.warn(`[Recorder] Failed to delete clip ${id}:`, (err as Error).message);
+export function getRecorder(config?: Partial<RecordingConfig>): Recorder {
+  if (!recorder) {
+    recorder = new Recorder(config);
   }
-}
-
-/**
- * Get clip file as buffer (for upload)
- */
-export function getClipBuffer(id: string): Buffer {
-  const clipPath = join(options.outputDir, `${id}.mp4`);
-  if (!existsSync(clipPath)) {
-    throw new Error(`Clip not found: ${id}`);
-  }
-  return readFileSync(clipPath);
-}
-
-/**
- * Get thumbnail buffer
- */
-export function getThumbnailBuffer(id: string): Buffer {
-  const thumbPath = join(options.outputDir, 'thumbnails', `${id}.jpg`);
-  if (!existsSync(thumbPath)) {
-    throw new Error(`Thumbnail not found: ${id}`);
-  }
-  return readFileSync(thumbPath);
-}
-
-/**
- * Get all clips metadata
- */
-export function getAllClips(): Array<{ id: string; size: number; created: Date }> {
-  return getClipList().map(c => ({
-    id: c.id,
-    size: c.size,
-    created: c.mtime,
-  }));
+  return recorder;
 }
