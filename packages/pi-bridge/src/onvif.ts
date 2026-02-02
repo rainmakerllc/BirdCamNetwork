@@ -56,7 +56,12 @@ function createProbeMessage(): string {
 }
 
 // Time offset to compensate for camera clock drift (in milliseconds)
-let cameraTimeOffset = 0;
+// Can be set via ONVIF_TIME_OFFSET env var (in ms) or auto-detected
+let cameraTimeOffset = parseInt(process.env.ONVIF_TIME_OFFSET || '0', 10) || 0;
+
+if (cameraTimeOffset !== 0) {
+  console.log(`[ONVIF] Using manual time offset from env: ${cameraTimeOffset}ms (${(cameraTimeOffset / 1000 / 60).toFixed(1)} minutes)`);
+}
 
 /**
  * Set the time offset between local time and camera time
