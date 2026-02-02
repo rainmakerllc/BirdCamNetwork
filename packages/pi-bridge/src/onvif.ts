@@ -409,3 +409,151 @@ export async function autoConnect(username?: string, password?: string): Promise
   
   return null;
 }
+
+// ==================== Camera Time Management ====================
+
+export interface CameraTime {
+  utcTime: string;
+  localTime: string;
+  timezone: string;
+  daylightSavings: boolean;
+  ntpEnabled: boolean;
+}
+
+/**
+ * Get camera's current system time via ONVIF
+ */
+export async function getCameraTime(
+  host: string,
+  port: number = 80,
+  username?: string,
+  password?: string
+): Promise<CameraTime | null> {
+  const deviceUrl = `http://${host}:${port}/onvif/device_service`;
+  
+  const body = `<tds:GetSystemDateAndTime xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>`;
+  
+  try {
+    const response = await soapRequest(deviceUrl, 'GetSystemDateAndTime', body, username, password);
+    
+    // Parse the response
+    const dateTimeType = extractValue(response, 'DateTimeType') || 'Manual';
+    const daylightSavings = extractValue(response, 'DaylightSavings') === 'true';
+    const timezone = extractValue(response, 'TZ') || 'UTC';
+    
+    // Extract UTC time
+    const utcYear = extractValue(response, 'Year') || new Date().getFullYear().toString();
+    const utcMonth = extractValue(response, 'Month') || '1';
+    const utcDay = extractValue(response, 'Day') || '1';
+    const utcHour = extractValue(response, 'Hour') || '0';
+    const utcMinute = extractValue(response, 'Minute') || '0';
+    const utcSecond = extractValue(response, 'Second') || '0';
+    
+    // Build UTC date
+    const utcDate = new Date(Date.UTC(
+      parseInt(utcYear),
+      parseInt(utcMonth) - 1,
+      parseInt(utcDay),
+      parseInt(utcHour),
+      parseInt(utcMinute),
+      parseInt(utcSecond)
+    ));
+    
+    return {
+      utcTime: utcDate.toISOString(),
+      localTime: utcDate.toLocaleString(),
+      timezone,
+      daylightSavings,
+      ntpEnabled: dateTimeType === 'NTP',
+    };
+  } catch (err) {
+    console.error('[ONVIF] Failed to get camera time:', (err as Error).message);
+    return null;
+  }
+}
+
+/**
+ * Set camera's system time via ONVIF
+ * This is crucial because ONVIF auth fails if camera time is too far off
+ */
+export async function setCameraTime(
+  host: string,
+  port: number = 80,
+  username?: string,
+  password?: string,
+  useNtp: boolean = false,
+  ntpServer?: string
+): Promise<boolean> {
+  const deviceUrl = `http://${host}:${port}/onvif/device_service`;
+  
+  const now = new Date();
+  
+  let body: string;
+  
+  if (useNtp) {
+    body = `
+      <tds:SetSystemDateAndTime xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+        <tds:DateTimeType>NTP</tds:DateTimeType>
+        <tds:DaylightSavings>false</tds:DaylightSavings>
+      </tds:SetSystemDateAndTime>`;
+  } else {
+    body = `
+      <tds:SetSystemDateAndTime xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+        <tds:DateTimeType>Manual</tds:DateTimeType>
+        <tds:DaylightSavings>false</tds:DaylightSavings>
+        <tds:UTCDateTime>
+          <tt:Time>
+            <tt:Hour>${now.getUTCHours()}</tt:Hour>
+            <tt:Minute>${now.getUTCMinutes()}</tt:Minute>
+            <tt:Second>${now.getUTCSeconds()}</tt:Second>
+          </tt:Time>
+          <tt:Date>
+            <tt:Year>${now.getUTCFullYear()}</tt:Year>
+            <tt:Month>${now.getUTCMonth() + 1}</tt:Month>
+            <tt:Day>${now.getUTCDate()}</tt:Day>
+          </tt:Date>
+        </tds:UTCDateTime>
+      </tds:SetSystemDateAndTime>`;
+  }
+  
+  try {
+    await soapRequest(deviceUrl, 'SetSystemDateAndTime', body, username, password);
+    console.log(`[ONVIF] Camera time ${useNtp ? 'set to NTP' : 'synchronized to'}: ${now.toISOString()}`);
+    return true;
+  } catch (err) {
+    console.error('[ONVIF] Failed to set camera time:', (err as Error).message);
+    return false;
+  }
+}
+
+/**
+ * Check if camera time is within acceptable range (for ONVIF auth to work)
+ * Returns the time difference in seconds
+ */
+export async function checkTimeSync(
+  host: string,
+  port: number = 80,
+  username?: string,
+  password?: string
+): Promise<{ synced: boolean; diffSeconds: number; cameraTime: string; systemTime: string } | null> {
+  const cameraTime = await getCameraTime(host, port, username, password);
+  
+  if (!cameraTime) {
+    return null;
+  }
+  
+  const cameraDate = new Date(cameraTime.utcTime);
+  const systemDate = new Date();
+  const diffMs = Math.abs(cameraDate.getTime() - systemDate.getTime());
+  const diffSeconds = Math.round(diffMs / 1000);
+  
+  // ONVIF typically allows up to 5 minutes of time difference
+  const synced = diffSeconds < 300;
+  
+  return {
+    synced,
+    diffSeconds,
+    cameraTime: cameraTime.utcTime,
+    systemTime: systemDate.toISOString(),
+  };
+}

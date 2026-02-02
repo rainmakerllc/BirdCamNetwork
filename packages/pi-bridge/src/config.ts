@@ -46,10 +46,16 @@ export const config = {
     profileToken: process.env.ONVIF_PROFILE_TOKEN || '', // Specific profile, empty = auto-select best
   },
   
-  // Firebase
+  // Firebase (optional - leave FIREBASE_SERVICE_ACCOUNT_PATH empty to disable)
   firebase: {
+    enabled: !!process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
     serviceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '',
     projectId: process.env.FIREBASE_PROJECT_ID || 'birdwatchnetwork',
+  },
+  
+  // Streaming
+  streaming: {
+    mode: (process.env.STREAM_MODE || 'webrtc') as 'webrtc' | 'hls' | 'auto',
   },
   
   // HLS Stream
@@ -114,9 +120,8 @@ export function validateConfig(): string[] {
     errors.push('ONVIF_HOST is required when USE_ONVIF=true and ONVIF_AUTO_DISCOVER=false');
   }
   
-  if (!config.firebase.serviceAccountPath) {
-    errors.push('FIREBASE_SERVICE_ACCOUNT_PATH is required');
-  } else if (!existsSync(config.firebase.serviceAccountPath)) {
+  // Firebase validation only if path is provided
+  if (config.firebase.serviceAccountPath && !existsSync(config.firebase.serviceAccountPath)) {
     errors.push(`Firebase service account not found: ${config.firebase.serviceAccountPath}`);
   }
   

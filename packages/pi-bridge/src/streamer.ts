@@ -1,6 +1,7 @@
 import ffmpeg from 'fluent-ffmpeg';
 import { mkdirSync, existsSync, rmSync } from 'fs';
 import { config } from './config.js';
+import { getSettings, RESOLUTION_PRESETS } from './settings.js';
 import type { FfmpegCommand } from 'fluent-ffmpeg';
 
 let ffmpegProcess: FfmpegCommand | null = null;
@@ -51,42 +52,77 @@ export async function startStreaming(): Promise<void> {
   mkdirSync(config.hls.outputDir, { recursive: true });
 
   const rtspUrl = getRtspUrl();
+  const settings = getSettings();
+  const videoSettings = settings.getVideo();
   
   console.log(`[Streamer] Starting RTSP → HLS transcoding`);
   console.log(`[Streamer] Input: ${rtspUrl.replace(/\/\/[^@]+@/, '//***@')}`);
   console.log(`[Streamer] Output: ${config.hls.outputDir}/stream.m3u8`);
+  console.log(`[Streamer] Settings: ${videoSettings.outputResolution} @ ${videoSettings.outputFps || 'source'}fps, ${videoSettings.outputBitrate}, ${videoSettings.qualityPreset}`);
 
   const outputPath = `${config.hls.outputDir}/stream.m3u8`;
+
+  // Build output options dynamically from settings
+  const outputOptions: string[] = [
+    // Video encoding
+    '-c:v', 'libx264',
+    '-preset', videoSettings.qualityPreset,
+    '-tune', 'zerolatency',
+    '-b:v', videoSettings.outputBitrate,
+    '-maxrate', videoSettings.outputBitrate,
+    '-bufsize', `${parseInt(videoSettings.outputBitrate) * 2}k`,
+  ];
+
+  // Resolution from settings
+  if (videoSettings.outputResolution !== 'source') {
+    let width: number | undefined;
+    let height: number | undefined;
+    
+    if (videoSettings.outputResolution === 'custom' && videoSettings.customWidth && videoSettings.customHeight) {
+      width = videoSettings.customWidth;
+      height = videoSettings.customHeight;
+    } else if (RESOLUTION_PRESETS[videoSettings.outputResolution]) {
+      const preset = RESOLUTION_PRESETS[videoSettings.outputResolution];
+      width = preset.width;
+      height = preset.height;
+    }
+
+    if (width && height) {
+      // Scale with padding to maintain aspect ratio and ensure even dimensions
+      outputOptions.push('-vf', `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`);
+    }
+  } else if (config.transcode.resolution) {
+    // Fallback to env config if set
+    outputOptions.push('-s', config.transcode.resolution);
+  }
+
+  // FPS limit from settings
+  if (videoSettings.outputFps > 0) {
+    outputOptions.push('-r', videoSettings.outputFps.toString());
+  }
+
+  // Audio encoding
+  if (videoSettings.audioEnabled) {
+    outputOptions.push('-c:a', 'aac');
+    outputOptions.push('-b:a', videoSettings.audioBitrate);
+    outputOptions.push('-ar', '44100');
+  } else {
+    outputOptions.push('-an');
+  }
+
+  // HLS options from settings
+  outputOptions.push('-f', 'hls');
+  outputOptions.push('-hls_time', videoSettings.hlsSegmentDuration.toString());
+  outputOptions.push('-hls_list_size', videoSettings.hlsPlaylistSize.toString());
+  outputOptions.push('-hls_flags', 'delete_segments+append_list');
+  outputOptions.push('-hls_segment_filename', `${config.hls.outputDir}/segment%03d.ts`);
 
   ffmpegProcess = ffmpeg(rtspUrl)
     .inputOptions([
       '-rtsp_transport tcp',  // More reliable than UDP
-      '-timeout 5000000',     // Socket timeout (microseconds) - use -timeout for newer ffmpeg
+      '-timeout 5000000',     // Socket timeout (microseconds)
     ])
-    .outputOptions([
-      // Video encoding
-      '-c:v libx264',
-      '-preset ultrafast',
-      '-tune zerolatency',
-      `-b:v ${config.transcode.bitrate}`,
-      '-maxrate ' + config.transcode.bitrate,
-      '-bufsize ' + (parseInt(config.transcode.bitrate) * 2) + 'k',
-      
-      // Resolution (if specified)
-      ...(config.transcode.resolution ? [`-s ${config.transcode.resolution}`] : []),
-      
-      // Audio encoding
-      '-c:a aac',
-      '-b:a 128k',
-      '-ar 44100',
-      
-      // HLS options
-      '-f hls',
-      `-hls_time ${config.hls.segmentDuration}`,
-      `-hls_list_size ${config.hls.playlistSize}`,
-      '-hls_flags delete_segments+append_list',
-      '-hls_segment_filename', `${config.hls.outputDir}/segment%03d.ts`,
-    ])
+    .outputOptions(outputOptions)
     .output(outputPath);
 
   // Progress tracking

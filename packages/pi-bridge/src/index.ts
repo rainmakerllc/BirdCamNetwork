@@ -21,6 +21,7 @@ import { discoverCameras, connectCamera, getBestStreamUrl, autoConnect, type Onv
 import { getMotionDetector, stopMotionDetection, type MotionEvent } from './motion.js';
 import { getRecorder } from './recorder.js';
 import { createPtzController, type PtzController } from './ptz.js';
+import { startGo2rtc, stopGo2rtc, isGo2rtcRunning, ensureGo2rtc } from './webrtc.js';
 
 console.log(`
 ╔══════════════════════════════════════════════════════════════╗
@@ -207,13 +208,17 @@ async function main() {
     process.exit(1);
   }
   
-  // Initialize Firebase
-  console.log('[Main] Initializing Firebase...');
-  try {
-    initFirebase();
-  } catch (err) {
-    console.warn('[Main] Firebase init failed:', (err as Error).message);
-    console.warn('[Main] Continuing without cloud sync...');
+  // Initialize Firebase (if configured)
+  if (config.firebase.enabled) {
+    console.log('[Main] Initializing Firebase...');
+    try {
+      initFirebase();
+    } catch (err) {
+      console.warn('[Main] Firebase init failed:', (err as Error).message);
+      console.warn('[Main] Continuing without cloud sync...');
+    }
+  } else {
+    console.log('[Main] Firebase: Disabled (no service account configured)');
   }
   
   // Resolve RTSP URL (from config or ONVIF)
@@ -261,52 +266,75 @@ async function main() {
     }
   }
   
-  // Start streaming
-  console.log('[Main] Starting RTSP→HLS transcoding...');
-  await startStreaming();
+  // Start streaming based on mode
+  const streamMode = config.streaming.mode;
+  console.log(`[Main] Stream mode: ${streamMode}`);
   
-  // Wait for stream to be ready
+  // Start WebRTC if enabled
+  let webrtcEnabled = false;
+  if (streamMode === 'webrtc' || streamMode === 'auto') {
+    console.log('[Main] Initializing WebRTC (go2rtc)...');
+    const go2rtcReady = await startGo2rtc(rtspUrl);
+    if (go2rtcReady) {
+      webrtcEnabled = true;
+      console.log('[Main] WebRTC streaming enabled');
+    } else {
+      console.warn('[Main] WebRTC init failed, will use HLS only');
+    }
+  }
+  
+  // Start HLS streaming (always needed as fallback or if webrtc-only mode failed)
+  if (streamMode === 'hls' || streamMode === 'auto' || !webrtcEnabled) {
+    console.log('[Main] Starting RTSP→HLS transcoding...');
+    await startStreaming();
+  }
+  
+  // Wait for streams to be ready
   await new Promise(resolve => setTimeout(resolve, 3000));
   
   // Initialize motion detection
   await initializeMotionDetection(rtspUrl);
   
-  // Register camera with BirdCam Network
-  console.log('[Main] Registering with BirdCam Network...');
-  try {
-    cameraId = await registerCamera(
-      '', // userId will be set when user claims the camera
-      `${publicUrl}/stream.m3u8`,
-      `${localUrl}/stream.m3u8`
-    );
-    console.log(`[Main] Registered camera: ${cameraId}`);
-    
-    // Update with stream info if available
-    if (streamInfo) {
-      await updateCameraStatus(cameraId, 'active', {
-        codec: streamInfo.codec,
-        resolution: streamInfo.resolution,
-        ptzSupported: ptzController !== null,
-      });
-    }
-  } catch (err) {
-    console.warn('[Main] Failed to register camera:', (err as Error).message);
-    console.warn('[Main] Continuing without cloud registration...');
-  }
-  
-  // Start heartbeat
-  heartbeatInterval = setInterval(async () => {
-    if (cameraId) {
-      try {
-        await sendHeartbeat(cameraId);
-        if (config.debug) {
-          console.log('[Main] Heartbeat sent');
-        }
-      } catch (err) {
-        console.error('[Main] Heartbeat failed:', (err as Error).message);
+  // Register camera with BirdCam Network (if Firebase enabled)
+  if (config.firebase.enabled) {
+    console.log('[Main] Registering with BirdCam Network...');
+    try {
+      cameraId = await registerCamera(
+        '', // userId will be set when user claims the camera
+        `${publicUrl}/stream.m3u8`,
+        `${localUrl}/stream.m3u8`
+      );
+      console.log(`[Main] Registered camera: ${cameraId}`);
+      
+      // Update with stream info if available
+      if (streamInfo) {
+        await updateCameraStatus(cameraId, 'active', {
+          codec: streamInfo.codec,
+          resolution: streamInfo.resolution,
+          ptzSupported: ptzController !== null,
+        });
       }
+    } catch (err) {
+      console.warn('[Main] Failed to register camera:', (err as Error).message);
+      console.warn('[Main] Continuing without cloud registration...');
     }
-  }, 30000); // Every 30 seconds
+    
+    // Start heartbeat
+    heartbeatInterval = setInterval(async () => {
+      if (cameraId) {
+        try {
+          await sendHeartbeat(cameraId);
+          if (config.debug) {
+            console.log('[Main] Heartbeat sent');
+          }
+        } catch (err) {
+          console.error('[Main] Heartbeat failed:', (err as Error).message);
+        }
+      }
+    }, 30000); // Every 30 seconds
+  } else {
+    console.log('[Main] Cloud registration: Skipped (Firebase disabled)');
+  }
   
   // Print startup summary
   console.log('');
@@ -317,10 +345,15 @@ async function main() {
   if (publicUrl !== localUrl) {
     console.log(`  🌍 Public:    ${publicUrl}`);
   }
-  console.log(`  🎥 Stream:    ${publicUrl}/stream.m3u8`);
+  console.log(`  🎥 HLS:       ${publicUrl}/stream.m3u8`);
+  if (webrtcEnabled) {
+    console.log(`  ⚡ WebRTC:    Enabled (via go2rtc)`);
+  }
   console.log('');
   console.log('  Features:');
-  console.log(`    • Streaming:   ${isStreaming() ? '✅ Active' : '⏳ Starting...'}`);
+  console.log(`    • Stream Mode: ${streamMode.toUpperCase()}`);
+  console.log(`    • WebRTC:      ${webrtcEnabled ? '✅ Enabled' : '❌ Not available'}`);
+  console.log(`    • HLS:         ${isStreaming() ? '✅ Active' : '⏳ Starting...'}`);
   console.log(`    • PTZ Control: ${ptzController ? '✅ Enabled' : '❌ Not available'}`);
   console.log(`    • Motion:      ${getMotionDetector().isRunning() ? '✅ Enabled' : '❌ Disabled'}`);
   console.log(`    • Recording:   ✅ Ready`);
@@ -348,6 +381,8 @@ function shutdown(signal: string) {
     updateCameraStatus(cameraId, 'offline').catch(() => {});
   }
   
+  // Stop streaming services
+  stopGo2rtc();
   stopStreaming();
   stopTunnel();
   
