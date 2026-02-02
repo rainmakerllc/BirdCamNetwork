@@ -82,17 +82,42 @@ async function main() {
   console.log(`[Main] Device ID: ${config.deviceId}`);
   console.log(`[Main] Camera: ${config.camera.name}`);
   
-  // Validate configuration
+  // Validate configuration (allow missing Firebase in debug mode)
   const errors = validateConfig();
-  if (errors.length > 0) {
+  const firebaseErrors = errors.filter(e => e.includes('Firebase') || e.includes('firebase'));
+  const otherErrors = errors.filter(e => !e.includes('Firebase') && !e.includes('firebase'));
+  
+  if (otherErrors.length > 0) {
     console.error('[Main] Configuration errors:');
-    errors.forEach(e => console.error(`  - ${e}`));
+    otherErrors.forEach(e => console.error(`  - ${e}`));
     process.exit(1);
   }
   
-  // Initialize Firebase
-  console.log('[Main] Initializing Firebase...');
-  initFirebase();
+  // Initialize Firebase (optional in debug mode)
+  let firebaseEnabled = true;
+  if (firebaseErrors.length > 0) {
+    if (config.debug) {
+      console.warn('[Main] Firebase not configured - running in local-only mode');
+      console.warn('[Main] Camera registration and cloud sync disabled');
+      firebaseEnabled = false;
+    } else {
+      console.error('[Main] Configuration errors:');
+      firebaseErrors.forEach(e => console.error(`  - ${e}`));
+      process.exit(1);
+    }
+  } else {
+    console.log('[Main] Initializing Firebase...');
+    try {
+      initFirebase();
+    } catch (err) {
+      if (config.debug) {
+        console.warn('[Main] Firebase init failed - running in local-only mode:', (err as Error).message);
+        firebaseEnabled = false;
+      } else {
+        throw err;
+      }
+    }
+  }
   
   // Resolve RTSP URL (from config or ONVIF)
   console.log('[Main] Resolving camera stream...');
@@ -144,24 +169,28 @@ async function main() {
   await new Promise(resolve => setTimeout(resolve, 3000));
   
   // Register camera with BirdCam Network
-  console.log('[Main] Registering with BirdCam Network...');
-  try {
-    cameraId = await registerCamera(
-      '', // userId will be set when user claims the camera
-      `${publicUrl}/stream.m3u8`,
-      `${localUrl}/stream.m3u8`
-    );
-    console.log(`[Main] Registered camera: ${cameraId}`);
-    
-    // Update with stream info if available
-    if (streamInfo) {
-      await updateCameraStatus(cameraId, 'active', {
-        codec: streamInfo.codec,
-        resolution: streamInfo.resolution,
-      });
+  if (firebaseEnabled) {
+    console.log('[Main] Registering with BirdCam Network...');
+    try {
+      cameraId = await registerCamera(
+        '', // userId will be set when user claims the camera
+        `${publicUrl}/stream.m3u8`,
+        `${localUrl}/stream.m3u8`
+      );
+      console.log(`[Main] Registered camera: ${cameraId}`);
+      
+      // Update with stream info if available
+      if (streamInfo) {
+        await updateCameraStatus(cameraId, 'active', {
+          codec: streamInfo.codec,
+          resolution: streamInfo.resolution,
+        });
+      }
+    } catch (err) {
+      console.error('[Main] Failed to register camera:', (err as Error).message);
     }
-  } catch (err) {
-    console.error('[Main] Failed to register camera:', (err as Error).message);
+  } else {
+    console.log('[Main] Skipping cloud registration (local-only mode)');
   }
   
   // Initialize bird detection
