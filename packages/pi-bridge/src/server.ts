@@ -7,6 +7,8 @@
 
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { join } from 'path';
 import { existsSync, statSync, createReadStream, readFileSync } from 'fs';
 import { config } from './config.js';
@@ -17,10 +19,52 @@ import { PtzController, createPtzController, type PtzCapabilities, type PtzPrese
 import { isGo2rtcRunning, proxyToGo2rtc, getGo2rtcApiPort } from './webrtc.js';
 import { getCameraTime, setCameraTime, checkTimeSync } from './onvif.js';
 import { getSettings, RESOLUTION_PRESETS, type VideoSettings } from './settings.js';
+import { initAuth, authMiddleware, isAuthConfigured, getApiKey } from './auth.js';
 
 const app = express();
+
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "cdn.jsdelivr.net"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      mediaSrc: ["'self'", "blob:"],
+      connectSrc: ["'self'", "ws:", "wss:"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,  // Allow embedding video
+}));
+
+// Rate limiting - prevent brute force
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutes
+  max: 1000,  // 1000 requests per window
+  message: { error: 'Too many requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(limiter);
+
+// Stricter rate limit for auth failures
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,  // 20 failed attempts per 15 min
+  message: { error: 'Too many authentication attempts' },
+  skipSuccessfulRequests: true,
+});
+app.use('/api', authLimiter);
+
 app.use(cors());
 app.use(express.json());
+
+// Initialize authentication
+initAuth();
+
+// Apply auth to all routes except health
+app.use(authMiddleware);
 
 // Global PTZ controller (set when camera connects)
 let ptzController: PtzController | null = null;
