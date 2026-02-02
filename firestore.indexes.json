@@ -1,0 +1,53 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "clips",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "clips",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "cameraId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sightings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "detectedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sightings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "cameraId", "order": "ASCENDING" },
+        { "fieldPath": "detectedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sightings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "speciesFinalId", "order": "ASCENDING" },
+        { "fieldPath": "detectedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "idRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -1,0 +1,88 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Users can read/write their own data
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+      
+      match /wallets/{walletId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+      
+      match /earnedBadges/{badgeId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow write: if false; // Server only
+      }
+    }
+    
+    // Cameras: owner can CRUD, public cams readable by all
+    match /cameras/{cameraId} {
+      allow read: if resource.data.isPublic == true || 
+                    (request.auth != null && resource.data.userId == request.auth.uid);
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      
+      match /zones/{zoneId} {
+        allow read, write: if request.auth != null && 
+          get(/databases/$(database)/documents/cameras/$(cameraId)).data.userId == request.auth.uid;
+      }
+    }
+    
+    // Clips: similar to cameras
+    match /clips/{clipId} {
+      allow read: if resource.data.shareVisibility == 'public' ||
+                    (request.auth != null && resource.data.userId == request.auth.uid);
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+    
+    // Sightings: readable if authenticated, write by server only
+    match /sightings/{sightingId} {
+      allow read: if request.auth != null;
+      allow write: if false; // Server only
+    }
+    
+    // Species: public read
+    match /species/{speciesCode} {
+      allow read: if true;
+      allow write: if false; // Admin only
+    }
+    
+    // Individuals: owner can read/write
+    match /individuals/{individualId} {
+      allow read: if resource.data.isPrivate == false || 
+                    (request.auth != null && resource.data.userId == request.auth.uid);
+      allow write: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+    
+    // Community ID Requests
+    match /idRequests/{requestId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && resource.data.requesterId == request.auth.uid;
+      
+      match /votes/{voteId} {
+        allow read: if request.auth != null;
+        allow create: if request.auth != null;
+      }
+    }
+    
+    // NFTs: owner read, server write
+    match /nftAssets/{nftId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow write: if false; // Server only
+    }
+    
+    // Badges: public read
+    match /badges/{badgeId} {
+      allow read: if true;
+      allow write: if false; // Admin only
+    }
+    
+    // Leaderboards: public read
+    match /leaderboards/{boardId} {
+      allow read: if true;
+      allow write: if false; // Server only
+    }
+  }
+}

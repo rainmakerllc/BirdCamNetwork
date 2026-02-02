@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+*.js.map
+
+# Environment files
+.env
+.env.local
+*.local
+
+# Firebase credentials
+*-service-account.json
+firebase-*.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# HLS output
+/tmp/
+*.ts
+*.m3u8
+
+# Test coverage
+coverage/

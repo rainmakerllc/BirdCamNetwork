@@ -1,0 +1,45 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fafafa;
+  --foreground: #18181b;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Focus visible only on keyboard navigation */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Smoother scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Animation utilities */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes zoom-in-95 {
+  from { transform: scale(0.95); }
+  to { transform: scale(1); }
+}
+
+.animate-in {
+  animation: fade-in 0.2s ease-out, zoom-in-95 0.2s ease-out;
+}
