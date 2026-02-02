@@ -1,5 +1,5 @@
 import { config as loadEnv } from 'dotenv';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -14,13 +14,11 @@ function getDeviceId(): string {
   // Try to load from persistent file
   const idFile = join(homedir(), '.birdcam-device-id');
   if (existsSync(idFile)) {
-    const { readFileSync } = require('fs');
     return readFileSync(idFile, 'utf-8').trim();
   }
   
   // Generate new ID and save it
   const newId = `pi-${uuidv4().slice(0, 8)}`;
-  const { writeFileSync } = require('fs');
   try {
     writeFileSync(idFile, newId);
   } catch {
