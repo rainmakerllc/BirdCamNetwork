@@ -113,3 +113,144 @@ export async function sendHeartbeat(cameraId: string): Promise<void> {
     lastHeartbeat: admin.firestore.Timestamp.now(),
   });
 }
+
+// Get Firebase Storage
+export function getStorage(): admin.storage.Storage {
+  if (!app) initFirebase();
+  return admin.storage();
+}
+
+export interface DetectionData {
+  species: string;
+  scientificName: string;
+  confidence: number;
+  clipId: string;
+  clipBuffer: Buffer;
+  thumbnailBuffer?: Buffer;
+  timestamp: Date;
+}
+
+export interface DetectionRecord {
+  id?: string;
+  cameraId: string;
+  species: string;
+  scientificName: string;
+  confidence: number;
+  clipUrl?: string;
+  thumbnailUrl?: string;
+  timestamp: admin.firestore.Timestamp;
+  createdAt: admin.firestore.Timestamp;
+}
+
+/**
+ * Upload a clip to Firebase Storage
+ */
+export async function uploadClip(
+  cameraId: string,
+  clipId: string,
+  clipBuffer: Buffer,
+  contentType: string = 'video/mp4'
+): Promise<string> {
+  const storage = getStorage();
+  const bucket = storage.bucket();
+  
+  const filePath = `clips/${cameraId}/${clipId}.mp4`;
+  const file = bucket.file(filePath);
+  
+  await file.save(clipBuffer, {
+    contentType,
+    metadata: {
+      cameraId,
+      clipId,
+      uploadedAt: new Date().toISOString(),
+    },
+  });
+  
+  // Make the file publicly accessible
+  await file.makePublic();
+  
+  return `https://storage.googleapis.com/${bucket.name}/${filePath}`;
+}
+
+/**
+ * Upload a thumbnail to Firebase Storage
+ */
+export async function uploadThumbnail(
+  cameraId: string,
+  clipId: string,
+  thumbnailBuffer: Buffer
+): Promise<string> {
+  const storage = getStorage();
+  const bucket = storage.bucket();
+  
+  const filePath = `thumbnails/${cameraId}/${clipId}.jpg`;
+  const file = bucket.file(filePath);
+  
+  await file.save(thumbnailBuffer, {
+    contentType: 'image/jpeg',
+    metadata: {
+      cameraId,
+      clipId,
+    },
+  });
+  
+  await file.makePublic();
+  
+  return `https://storage.googleapis.com/${bucket.name}/${filePath}`;
+}
+
+/**
+ * Save a bird detection record
+ */
+export async function saveDetection(
+  cameraId: string,
+  data: DetectionData
+): Promise<string> {
+  const db = getFirestore();
+  
+  // Upload clip
+  const clipUrl = await uploadClip(cameraId, data.clipId, data.clipBuffer);
+  
+  // Upload thumbnail if available
+  let thumbnailUrl: string | undefined;
+  if (data.thumbnailBuffer) {
+    thumbnailUrl = await uploadThumbnail(cameraId, data.clipId, data.thumbnailBuffer);
+  }
+  
+  // Create detection record
+  const record: Omit<DetectionRecord, 'id'> = {
+    cameraId,
+    species: data.species,
+    scientificName: data.scientificName,
+    confidence: data.confidence,
+    clipUrl,
+    thumbnailUrl,
+    timestamp: admin.firestore.Timestamp.fromDate(data.timestamp),
+    createdAt: admin.firestore.Timestamp.now(),
+  };
+  
+  const docRef = await db.collection('detections').add(record);
+  
+  // Also update the camera's last detection info
+  await db.collection('cameras').doc(cameraId).update({
+    lastDetection: {
+      species: data.species,
+      confidence: data.confidence,
+      timestamp: record.timestamp,
+      clipUrl,
+      thumbnailUrl,
+    },
+    updatedAt: admin.firestore.Timestamp.now(),
+  });
+  
+  // Update species collection (for analytics)
+  const speciesRef = db.collection('species').doc(data.scientificName.replace(/\s+/g, '_').toLowerCase());
+  await speciesRef.set({
+    commonName: data.species,
+    scientificName: data.scientificName,
+    lastSeen: record.timestamp,
+    detectionCount: admin.firestore.FieldValue.increment(1),
+  }, { merge: true });
+  
+  return docRef.id;
+}

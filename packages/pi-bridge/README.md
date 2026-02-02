@@ -7,6 +7,8 @@ This bridge software runs on a Raspberry Pi, connects to your local IP camera's 
 ## Features
 
 - 📹 **RTSP → HLS Transcoding** - Converts your camera's RTSP stream to web-compatible HLS
+- 🐦 **Bird Detection** - BirdNET integration for automatic bird species identification
+- 🎬 **Clip Recording** - Captures video clips when birds are detected
 - 🎯 **ONVIF Support** - Auto-discover cameras and get stream URLs automatically
 - 🌍 **Cloudflare Tunnel** - Automatic NAT traversal and dynamic DNS (free tier)
 - 🔗 **Auto-Registration** - Automatically registers with BirdCam Network
@@ -148,6 +150,51 @@ Once running, your stream is available at:
 - **Public** (with tunnel): `https://your-tunnel-url/stream.m3u8`
 - **Player page**: `http://<pi-ip>:8080/`
 
+## Bird Detection
+
+The Pi Bridge uses [BirdNET](https://github.com/kahst/BirdNET-Analyzer) for automatic bird species identification. When a bird is detected, it:
+
+1. 🎤 Captures audio from the RTSP stream
+2. 🔍 Analyzes with BirdNET ML model
+3. 📹 Records a short video clip
+4. ☁️ Uploads to Firebase Storage
+5. 📊 Updates detection records in Firestore
+
+### Setup BirdNET
+
+```bash
+# Install Python dependencies
+pip install birdnetlib
+
+# Or install BirdNET-Analyzer directly
+pip install birdnet-analyzer
+```
+
+### Configuration
+
+```env
+# Enable detection (default: true)
+BIRD_DETECTION_ENABLED=true
+
+# Minimum confidence threshold (0-1)
+DETECTION_MIN_CONFIDENCE=0.7
+
+# Your location (improves accuracy by filtering likely species)
+LOCATION_LATITUDE=40.7128
+LOCATION_LONGITUDE=-74.0060
+```
+
+### Clip Recording
+
+When a bird is detected, the bridge records a clip:
+
+```env
+CLIP_RECORDING_ENABLED=true
+CLIP_DURATION=15        # seconds
+MAX_CLIPS=100           # auto-cleanup oldest
+MAX_STORAGE_MB=1024     # 1GB limit
+```
+
 ## API Endpoints
 
 | Endpoint | Description |
@@ -157,6 +204,12 @@ Once running, your stream is available at:
 | `GET /segment*.ts` | HLS video segments |
 | `GET /health` | Health check with stream stats |
 | `GET /info` | Device and stream info |
+| `GET /detect` | Trigger manual bird detection |
+| `POST /record` | Record a clip manually |
+| `GET /snapshot` | Take a snapshot |
+| `GET /clips` | List all recorded clips |
+| `GET /clips/:id.mp4` | Download a clip |
+| `GET /clips/:id.jpg` | Get clip thumbnail |
 
 ## Supported Cameras
 
@@ -256,12 +309,24 @@ rtsp://username:password@ip:554/cam/realmonitor?channel=1&subtype=0
 │              │  (local LAN)  │  Pi Bridge   │  (tunnel)    │  Network     │
 └──────────────┘               └──────────────┘              └──────────────┘
                                      │
-                                     │ Registers &
-                                     │ Heartbeats
+                               ┌─────┴─────┐
+                               │           │
+                          Audio│           │ Clips &
+                               ▼           │ Detections
+                        ┌──────────┐       │
+                        │ BirdNET  │       │
+                        │ (ML)     │       │
+                        └──────────┘       │
+                               │           │
+                           Detects         │
+                               │           │
+                               └─────┬─────┘
+                                     │
                                      ▼
                                ┌──────────────┐
                                │   Firebase   │
                                │  Firestore   │
+                               │  + Storage   │
                                └──────────────┘
 ```
 

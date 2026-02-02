@@ -75,6 +75,28 @@ export const config = {
     hostname: process.env.CLOUDFLARE_TUNNEL_HOSTNAME || '',
   },
   
+  // Bird Detection
+  detection: {
+    enabled: process.env.BIRD_DETECTION_ENABLED !== 'false',  // Enabled by default
+    minConfidence: parseFloat(process.env.DETECTION_MIN_CONFIDENCE || '0.7'),
+    analysisInterval: parseInt(process.env.DETECTION_INTERVAL || '3', 10),
+    sampleDuration: parseInt(process.env.DETECTION_SAMPLE_DURATION || '3', 10),
+    latitude: process.env.LOCATION_LATITUDE ? parseFloat(process.env.LOCATION_LATITUDE) : undefined,
+    longitude: process.env.LOCATION_LONGITUDE ? parseFloat(process.env.LOCATION_LONGITUDE) : undefined,
+    locale: process.env.BIRDNET_LOCALE || 'en',
+  },
+  
+  // Clip Recording
+  recording: {
+    enabled: process.env.CLIP_RECORDING_ENABLED !== 'false',  // Enabled by default
+    clipDuration: parseInt(process.env.CLIP_DURATION || '15', 10),
+    preBuffer: parseInt(process.env.CLIP_PRE_BUFFER || '5', 10),
+    outputDir: process.env.CLIPS_OUTPUT_DIR || './clips',
+    maxClips: parseInt(process.env.MAX_CLIPS || '100', 10),
+    maxStorageMB: parseInt(process.env.MAX_STORAGE_MB || '1024', 10),
+    generateThumbnail: process.env.GENERATE_THUMBNAILS !== 'false',
+  },
+  
   // System
   deviceId: getDeviceId(),
   debug: process.env.DEBUG === 'true',

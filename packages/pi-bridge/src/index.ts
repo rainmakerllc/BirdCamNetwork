@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { config, validateConfig } from './config.js';
-import { initFirebase, registerCamera, sendHeartbeat, updateCameraStatus } from './firebase.js';
+import { initFirebase, registerCamera, sendHeartbeat, updateCameraStatus, uploadClip, saveDetection } from './firebase.js';
 import { startStreaming, stopStreaming, probeStream, isStreaming, setRtspUrl } from './streamer.js';
 import { startServer } from './server.js';
 import { startTunnel, startQuickTunnel, stopTunnel, getPublicUrl } from './tunnel.js';
 import { discoverCameras, connectCamera, getBestStreamUrl, autoConnect, type OnvifDevice } from './onvif.js';
+import { initDetector, setDetectorSource, onBirdDetected, startDetection, stopDetection, type BirdDetection } from './detector.js';
+import { initRecorder, setRecorderSource, recordClip, captureSnapshot, getClipBuffer, getThumbnailBuffer } from './recorder.js';
 
 console.log(`
 ╔══════════════════════════════════════════════════════════════╗
@@ -162,6 +164,76 @@ async function main() {
     console.error('[Main] Failed to register camera:', (err as Error).message);
   }
   
+  // Initialize bird detection
+  if (config.detection.enabled) {
+    console.log('[Main] Setting up bird detection...');
+    initDetector({
+      minConfidence: config.detection.minConfidence,
+      analysisInterval: config.detection.analysisInterval,
+      sampleDuration: config.detection.sampleDuration,
+      latitude: config.detection.latitude,
+      longitude: config.detection.longitude,
+      locale: config.detection.locale,
+    });
+    setDetectorSource(rtspUrl);
+    
+    // Initialize clip recording
+    if (config.recording.enabled) {
+      console.log('[Main] Setting up clip recording...');
+      initRecorder({
+        clipDuration: config.recording.clipDuration,
+        preBuffer: config.recording.preBuffer,
+        outputDir: config.recording.outputDir,
+        maxClips: config.recording.maxClips,
+        maxStorageMB: config.recording.maxStorageMB,
+        generateThumbnail: config.recording.generateThumbnail,
+      });
+      setRecorderSource(rtspUrl);
+    }
+    
+    // Handle bird detections
+    onBirdDetected(async (detection: BirdDetection) => {
+      console.log(`[Main] 🐦 Bird detected: ${detection.species} (${(detection.confidence * 100).toFixed(1)}%)`);
+      
+      // Record clip if enabled
+      if (config.recording.enabled) {
+        try {
+          const clip = await recordClip('bird_detection', {
+            species: detection.species,
+            confidence: detection.confidence,
+          });
+          
+          // Upload to Firebase if we have a camera ID
+          if (cameraId) {
+            console.log('[Main] Uploading detection to cloud...');
+            try {
+              const clipBuffer = getClipBuffer(clip.id);
+              const thumbnailBuffer = clip.thumbnailPath ? getThumbnailBuffer(clip.id) : undefined;
+              
+              await saveDetection(cameraId, {
+                species: detection.species,
+                scientificName: detection.scientificName,
+                confidence: detection.confidence,
+                clipId: clip.id,
+                clipBuffer,
+                thumbnailBuffer,
+                timestamp: detection.timestamp,
+              });
+              console.log('[Main] Detection uploaded successfully');
+            } catch (uploadErr) {
+              console.error('[Main] Upload failed:', (uploadErr as Error).message);
+            }
+          }
+        } catch (recordErr) {
+          console.error('[Main] Recording failed:', (recordErr as Error).message);
+        }
+      }
+    });
+    
+    // Start detection
+    await startDetection();
+  }
+  
   // Start heartbeat
   heartbeatInterval = setInterval(async () => {
     if (cameraId) {
@@ -201,6 +273,9 @@ function shutdown(signal: string) {
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);
   }
+  
+  // Stop detection
+  stopDetection();
   
   // Update camera status to offline
   if (cameraId) {

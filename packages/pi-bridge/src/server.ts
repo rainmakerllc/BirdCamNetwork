@@ -4,6 +4,8 @@ import { join } from 'path';
 import { existsSync, statSync, createReadStream } from 'fs';
 import { config } from './config.js';
 import { getStreamStats, isStreaming } from './streamer.js';
+import { isDetecting, analyzeNow } from './detector.js';
+import { recordClip, captureSnapshot, getAllClips, isCurrentlyRecording } from './recorder.js';
 
 const app = express();
 app.use(cors());
@@ -55,13 +57,116 @@ app.get('/info', (req, res) => {
     name: config.camera.name,
     location: config.camera.location,
     streaming: isStreaming(),
+    detecting: isDetecting(),
+    recording: isCurrentlyRecording(),
     stats: getStreamStats(),
     endpoints: {
       health: '/health',
       stream: '/stream.m3u8',
       info: '/info',
+      detect: '/detect',
+      record: '/record',
+      snapshot: '/snapshot',
+      clips: '/clips',
     },
   });
+});
+
+// Manual detection trigger
+app.get('/detect', async (req, res) => {
+  try {
+    const detections = await analyzeNow();
+    res.json({
+      success: true,
+      detections,
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: (err as Error).message,
+    });
+  }
+});
+
+// Manual clip recording
+app.post('/record', async (req, res) => {
+  try {
+    const clip = await recordClip('manual');
+    res.json({
+      success: true,
+      clip: {
+        id: clip.id,
+        duration: clip.duration,
+        fileSize: clip.fileSize,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: (err as Error).message,
+    });
+  }
+});
+
+// Take a snapshot
+app.get('/snapshot', async (req, res) => {
+  try {
+    const snap = await captureSnapshot('api');
+    
+    if (existsSync(snap.filePath)) {
+      res.setHeader('Content-Type', 'image/jpeg');
+      createReadStream(snap.filePath).pipe(res);
+    } else {
+      res.status(500).json({ error: 'Snapshot failed' });
+    }
+  } catch (err) {
+    res.status(500).json({
+      error: (err as Error).message,
+    });
+  }
+});
+
+// List clips
+app.get('/clips', (req, res) => {
+  try {
+    const clips = getAllClips();
+    res.json({
+      count: clips.length,
+      clips,
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: (err as Error).message,
+    });
+  }
+});
+
+// Serve clip files
+app.get('/clips/:id.mp4', (req, res) => {
+  const filePath = join(config.recording.outputDir, `${req.params.id}.mp4`);
+  
+  if (!existsSync(filePath)) {
+    res.status(404).json({ error: 'Clip not found' });
+    return;
+  }
+  
+  const stat = statSync(filePath);
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Length', stat.size);
+  createReadStream(filePath).pipe(res);
+});
+
+// Serve clip thumbnails
+app.get('/clips/:id.jpg', (req, res) => {
+  const filePath = join(config.recording.outputDir, 'thumbnails', `${req.params.id}.jpg`);
+  
+  if (!existsSync(filePath)) {
+    res.status(404).json({ error: 'Thumbnail not found' });
+    return;
+  }
+  
+  res.setHeader('Content-Type', 'image/jpeg');
+  createReadStream(filePath).pipe(res);
 });
 
 // Simple player page
