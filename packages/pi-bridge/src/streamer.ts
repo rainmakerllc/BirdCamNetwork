@@ -61,7 +61,7 @@ export async function startStreaming(): Promise<void> {
   ffmpegProcess = ffmpeg(rtspUrl)
     .inputOptions([
       '-rtsp_transport tcp',  // More reliable than UDP
-      '-stimeout 5000000',    // Socket timeout (microseconds)
+      '-timeout 5000000',     // Socket timeout (microseconds) - use -timeout for newer ffmpeg
     ])
     .outputOptions([
       // Video encoding
