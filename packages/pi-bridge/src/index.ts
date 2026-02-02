@@ -22,6 +22,9 @@ import { getMotionDetector, stopMotionDetection, type MotionEvent } from './moti
 import { getRecorder } from './recorder.js';
 import { createPtzController, type PtzController } from './ptz.js';
 import { createAmcrestPtzController, isAmcrestCamera, type AmcrestPtzController } from './amcrest-ptz.js';
+import { getPresetManager } from './ptz-presets.js';
+import { getBirdTracker, type BirdSighting } from './bird-tracker.js';
+import { initDetector, setDetectorSource, onBirdDetected, startDetection, type BirdDetection } from './detector.js';
 import { startGo2rtc, stopGo2rtc, isGo2rtcRunning, ensureGo2rtc } from './webrtc.js';
 
 console.log(`
@@ -142,6 +145,12 @@ async function initializePtz(): Promise<void> {
     if (capabilities.supported) {
       console.log(`[Main] PTZ: Enabled via ${useAmcrestCgi ? 'Amcrest CGI' : 'ONVIF'}`);
       setPtzController(ptzController as PtzController);
+      
+      // Initialize preset manager with PTZ controller
+      const presetManager = getPresetManager();
+      presetManager.setPtzController(ptzController);
+      presetManager.initSchedules();
+      console.log('[Main] PTZ: Preset manager initialized');
     } else {
       console.log('[Main] PTZ: Camera does not support PTZ');
       ptzController = null;
@@ -149,6 +158,83 @@ async function initializePtz(): Promise<void> {
   } catch (err) {
     console.warn('[Main] PTZ: Failed to initialize:', (err as Error).message);
     ptzController = null;
+  }
+}
+
+async function initializeBirdDetection(rtspUrl: string): Promise<void> {
+  if (process.env.BIRD_DETECTION_ENABLED === 'false') {
+    console.log('[Main] Bird detection: Disabled by config');
+    return;
+  }
+
+  try {
+    const birdTracker = getBirdTracker();
+    const recorder = getRecorder();
+
+    // Initialize detector
+    initDetector({
+      minConfidence: config.detection.minConfidence,
+      analysisInterval: config.detection.analysisInterval,
+      sampleDuration: config.detection.sampleDuration,
+      latitude: config.detection.latitude,
+      longitude: config.detection.longitude,
+      locale: config.detection.locale,
+    });
+
+    setDetectorSource(rtspUrl);
+
+    // Handle bird detections
+    onBirdDetected(async (detection: BirdDetection) => {
+      console.log(`[Main] 🐦 Bird detected: ${detection.species} (${(detection.confidence * 100).toFixed(1)}%)`);
+
+      // Capture snapshot
+      const snapshot = await recorder.captureSnapshot(`bird-${detection.species}`);
+
+      // Record sighting
+      const sighting = birdTracker.recordSighting({
+        species: detection.species,
+        scientificName: detection.scientificName,
+        confidence: detection.confidence,
+        timestamp: new Date().toISOString(),
+        snapshotId: snapshot?.id,
+      });
+
+      // Start recording if not already
+      if (!recorder.isRecording()) {
+        const clipId = await recorder.startRecording('motion');
+        if (clipId) {
+          // Could update sighting with clipId here
+          setTimeout(() => {
+            if (recorder.isRecording()) {
+              recorder.stopRecording();
+            }
+          }, 15000);
+        }
+      }
+
+      // Update Firebase if connected
+      if (cameraId) {
+        try {
+          await updateCameraStatus(cameraId, 'active', {
+            event: 'bird_detected',
+            species: detection.species,
+            confidence: detection.confidence,
+            sightingId: sighting.id,
+          });
+        } catch {}
+      }
+    });
+
+    // Listen for new species events
+    birdTracker.on('newSpecies', (sighting: BirdSighting) => {
+      console.log(`[Main] 🎉 NEW SPECIES: ${sighting.species} added to life list!`);
+    });
+
+    // Start detection
+    await startDetection();
+    console.log('[Main] Bird detection: Enabled');
+  } catch (err) {
+    console.warn('[Main] Bird detection: Failed to initialize:', (err as Error).message);
   }
 }
 
@@ -317,6 +403,9 @@ async function main() {
   // Initialize motion detection
   await initializeMotionDetection(rtspUrl);
   
+  // Initialize bird detection (BirdNET)
+  await initializeBirdDetection(rtspUrl);
+  
   // Register camera with BirdCam Network (if Firebase enabled)
   if (config.firebase.enabled) {
     console.log('[Main] Registering with BirdCam Network...');
@@ -378,6 +467,7 @@ async function main() {
   console.log(`    • HLS:         ${isStreaming() ? '✅ Active' : '⏳ Starting...'}`);
   console.log(`    • PTZ Control: ${ptzController ? '✅ Enabled' : '❌ Not available'}`);
   console.log(`    • Motion:      ${getMotionDetector().isRunning() ? '✅ Enabled' : '❌ Disabled'}`);
+  console.log(`    • Birds:       ${process.env.BIRD_DETECTION_ENABLED !== 'false' ? '✅ BirdNET' : '❌ Disabled'}`);
   console.log(`    • Recording:   ✅ Ready`);
   console.log('');
   if (cameraId) {

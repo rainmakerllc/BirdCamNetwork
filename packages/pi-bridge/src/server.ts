@@ -21,6 +21,8 @@ import { isGo2rtcRunning, proxyToGo2rtc, getGo2rtcApiPort } from './webrtc.js';
 import { getCameraTime, setCameraTime, checkTimeSync } from './onvif.js';
 import { getSettings, RESOLUTION_PRESETS, type VideoSettings } from './settings.js';
 import { initAuth, authMiddleware, isAuthConfigured, getApiKey } from './auth.js';
+import { getPresetManager } from './ptz-presets.js';
+import { getBirdTracker } from './bird-tracker.js';
 
 const app = express();
 
@@ -633,6 +635,153 @@ app.post('/api/settings/apply', asyncHandler(async (req, res) => {
     res.json({ success: true, message: 'Settings saved. Stream not running.' });
   }
 }));
+
+// ==================== Enhanced Preset Management ====================
+
+// Get all saved presets
+app.get('/api/presets', (req, res) => {
+  const presetManager = getPresetManager();
+  res.json({
+    presets: presetManager.getPresets(),
+    patrol: presetManager.getPatrolConfig(),
+    patrolActive: presetManager.isPatrolling(),
+  });
+});
+
+// Save a preset
+app.post('/api/presets', asyncHandler(async (req, res) => {
+  const presetManager = getPresetManager();
+  
+  if (req.body.createFromCurrent) {
+    // Create from current camera position
+    const preset = await presetManager.createPresetFromCurrent(
+      req.body.name,
+      req.body.description
+    );
+    res.json({ success: !!preset, preset });
+  } else {
+    // Save preset data
+    const preset = await presetManager.savePreset(req.body);
+    res.json({ success: true, preset });
+  }
+}));
+
+// Go to a saved preset
+app.post('/api/presets/:id/goto', asyncHandler(async (req, res) => {
+  const presetManager = getPresetManager();
+  const success = await presetManager.gotoPreset(req.params.id);
+  res.json({ success });
+}));
+
+// Delete a preset
+app.delete('/api/presets/:id', (req, res) => {
+  const presetManager = getPresetManager();
+  const success = presetManager.deletePreset(req.params.id);
+  res.json({ success });
+});
+
+// Patrol mode
+app.post('/api/patrol/start', (req, res) => {
+  const presetManager = getPresetManager();
+  const success = presetManager.startPatrol();
+  res.json({ success });
+});
+
+app.post('/api/patrol/stop', (req, res) => {
+  const presetManager = getPresetManager();
+  presetManager.stopPatrol();
+  res.json({ success: true });
+});
+
+app.post('/api/patrol/config', (req, res) => {
+  const presetManager = getPresetManager();
+  const config = presetManager.setPatrolConfig(req.body);
+  res.json({ success: true, config });
+});
+
+// ==================== Bird Tracking ====================
+
+// Get bird tracking summary
+app.get('/api/birds/summary', (req, res) => {
+  const tracker = getBirdTracker();
+  res.json(tracker.getSummary());
+});
+
+// Get life list
+app.get('/api/birds/lifelist', (req, res) => {
+  const tracker = getBirdTracker();
+  res.json({
+    species: tracker.getLifeList(),
+    count: tracker.getSpeciesCount(),
+  });
+});
+
+// Get recent sightings
+app.get('/api/birds/sightings', (req, res) => {
+  const tracker = getBirdTracker();
+  const limit = parseInt(req.query.limit as string) || 50;
+  res.json({
+    sightings: tracker.getRecentSightings(limit),
+  });
+});
+
+// Get sightings for today
+app.get('/api/birds/today', (req, res) => {
+  const tracker = getBirdTracker();
+  res.json(tracker.getDailyStats());
+});
+
+// Get species stats
+app.get('/api/birds/species/:name', (req, res) => {
+  const tracker = getBirdTracker();
+  const stats = tracker.getSpeciesStats(req.params.name);
+  if (stats) {
+    res.json(stats);
+  } else {
+    res.status(404).json({ error: 'Species not found' });
+  }
+});
+
+// Get top species
+app.get('/api/birds/top', (req, res) => {
+  const tracker = getBirdTracker();
+  const limit = parseInt(req.query.limit as string) || 10;
+  res.json({
+    species: tracker.getTopSpecies(limit),
+  });
+});
+
+// Get activity heatmap
+app.get('/api/birds/heatmap', (req, res) => {
+  const tracker = getBirdTracker();
+  res.json({
+    heatmap: tracker.getActivityHeatmap(),
+    labels: {
+      days: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      hours: Array.from({ length: 24 }, (_, i) => `${i}:00`),
+    },
+  });
+});
+
+// Search sightings
+app.get('/api/birds/search', (req, res) => {
+  const tracker = getBirdTracker();
+  const query = req.query.q as string || '';
+  const minConfidence = parseFloat(req.query.minConfidence as string) || undefined;
+  
+  const results = tracker.search(query, { minConfidence });
+  res.json({
+    query,
+    count: results.length,
+    sightings: results.slice(0, 100), // Limit response
+  });
+});
+
+// Export all data
+app.get('/api/birds/export', (req, res) => {
+  const tracker = getBirdTracker();
+  res.json(tracker.exportData());
+});
 
 // ==================== Web Dashboard ====================
 
