@@ -263,8 +263,15 @@ export async function discoverCameras(timeoutMs = 5000): Promise<DiscoveredCamer
 /**
  * Detect camera time offset by querying system date without auth
  * This helps when camera clock is not synced with the Pi
+ * Note: If ONVIF_TIME_OFFSET is set in env, auto-detection is skipped
  */
 export async function detectCameraTimeOffset(host: string, port: number = 80): Promise<number> {
+  // Skip auto-detection if manual offset is configured
+  if (cameraTimeOffset !== 0) {
+    console.log(`[ONVIF] Using pre-configured time offset: ${(cameraTimeOffset / 1000).toFixed(1)}s`);
+    return cameraTimeOffset;
+  }
+  
   const baseUrl = `http://${host}:${port}/onvif/device_service`;
   
   // GetSystemDateAndTime doesn't require auth on most cameras
@@ -296,7 +303,7 @@ export async function detectCameraTimeOffset(host: string, port: number = 80): P
       )).getTime();
       
       const offset = cameraTime - localTime;
-      console.log(`[ONVIF] Camera time offset: ${(offset / 1000).toFixed(1)}s (${(offset / 1000 / 60).toFixed(1)} min)`);
+      console.log(`[ONVIF] Auto-detected camera time offset: ${(offset / 1000).toFixed(1)}s (${(offset / 1000 / 60).toFixed(1)} min)`);
       
       // Only apply offset if significant (> 5 seconds)
       if (Math.abs(offset) > 5000) {
@@ -305,10 +312,10 @@ export async function detectCameraTimeOffset(host: string, port: number = 80): P
       }
     }
   } catch (err) {
-    console.warn('[ONVIF] Could not detect camera time, using local time:', (err as Error).message);
+    console.log('[ONVIF] Could not auto-detect camera time (may require auth)');
   }
   
-  return 0;
+  return cameraTimeOffset;
 }
 
 /**
