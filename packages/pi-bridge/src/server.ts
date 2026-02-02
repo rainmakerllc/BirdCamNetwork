@@ -16,6 +16,7 @@ import { getStreamStats, isStreaming, probeStream } from './streamer.js';
 import { getRecorder, type ClipInfo, type SnapshotInfo } from './recorder.js';
 import { getMotionDetector, type MotionConfig } from './motion.js';
 import { PtzController, createPtzController, type PtzCapabilities, type PtzPreset } from './ptz.js';
+import type { AmcrestPtzController } from './amcrest-ptz.js';
 import { isGo2rtcRunning, proxyToGo2rtc, getGo2rtcApiPort } from './webrtc.js';
 import { getCameraTime, setCameraTime, checkTimeSync } from './onvif.js';
 import { getSettings, RESOLUTION_PRESETS, type VideoSettings } from './settings.js';
@@ -67,9 +68,10 @@ initAuth();
 app.use(authMiddleware);
 
 // Global PTZ controller (set when camera connects)
-let ptzController: PtzController | null = null;
+// Supports both ONVIF PtzController and AmcrestPtzController
+let ptzController: PtzController | AmcrestPtzController | null = null;
 
-export function setPtzController(controller: PtzController): void {
+export function setPtzController(controller: PtzController | AmcrestPtzController): void {
   ptzController = controller;
 }
 

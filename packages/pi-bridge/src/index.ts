@@ -21,6 +21,7 @@ import { discoverCameras, connectCamera, getBestStreamUrl, autoConnect, type Onv
 import { getMotionDetector, stopMotionDetection, type MotionEvent } from './motion.js';
 import { getRecorder } from './recorder.js';
 import { createPtzController, type PtzController } from './ptz.js';
+import { createAmcrestPtzController, isAmcrestCamera, type AmcrestPtzController } from './amcrest-ptz.js';
 import { startGo2rtc, stopGo2rtc, isGo2rtcRunning, ensureGo2rtc } from './webrtc.js';
 
 console.log(`
@@ -35,7 +36,7 @@ console.log(`
 let cameraId: string | null = null;
 let heartbeatInterval: NodeJS.Timeout | null = null;
 let onvifDevice: OnvifDevice | null = null;
-let ptzController: PtzController | null = null;
+let ptzController: PtzController | AmcrestPtzController | null = null;
 
 async function resolveRtspUrl(): Promise<string> {
   // If ONVIF is enabled, discover/connect to get RTSP URL
@@ -108,18 +109,39 @@ async function initializePtz(): Promise<void> {
       return;
     }
 
-    ptzController = createPtzController(
-      config.onvif.host,
-      config.onvif.port,
-      config.onvif.username,
-      config.onvif.password,
-      profileToken
-    );
+    // Determine which PTZ controller to use
+    const ptzMode = config.ptz.mode;
+    const isAmcrest = isAmcrestCamera(onvifDevice.manufacturer, onvifDevice.model);
+    
+    // Decide: use Amcrest CGI if mode is 'amcrest' OR (mode is 'auto' AND camera is Amcrest)
+    const useAmcrestCgi = ptzMode === 'amcrest' || (ptzMode === 'auto' && isAmcrest);
+    
+    if (useAmcrestCgi) {
+      console.log(`[Main] PTZ: Using Amcrest CGI API (mode=${ptzMode}, detected=${isAmcrest ? 'Amcrest' : 'other'})`);
+      
+      ptzController = createAmcrestPtzController(
+        config.onvif.host,
+        config.onvif.port,
+        config.onvif.username,
+        config.onvif.password,
+        config.ptz.channel
+      );
+    } else {
+      console.log(`[Main] PTZ: Using ONVIF protocol (mode=${ptzMode})`);
+      
+      ptzController = createPtzController(
+        config.onvif.host,
+        config.onvif.port,
+        config.onvif.username,
+        config.onvif.password,
+        profileToken
+      );
+    }
 
     const capabilities = await ptzController.getCapabilities();
     if (capabilities.supported) {
-      console.log('[Main] PTZ: Enabled');
-      setPtzController(ptzController);
+      console.log(`[Main] PTZ: Enabled via ${useAmcrestCgi ? 'Amcrest CGI' : 'ONVIF'}`);
+      setPtzController(ptzController as PtzController);
     } else {
       console.log('[Main] PTZ: Camera does not support PTZ');
       ptzController = null;

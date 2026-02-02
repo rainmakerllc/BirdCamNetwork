@@ -61,6 +61,15 @@ export const config = {
     profileToken: process.env.ONVIF_PROFILE_TOKEN || '', // Specific profile, empty = auto-select best
   },
   
+  // PTZ Control
+  ptz: {
+    // Use Amcrest CGI API instead of ONVIF for PTZ (more reliable on Amcrest cameras)
+    // 'auto' = detect Amcrest and use CGI, 'amcrest' = force CGI, 'onvif' = force ONVIF
+    mode: (process.env.PTZ_MODE || 'auto') as 'auto' | 'amcrest' | 'onvif',
+    // Channel for Amcrest CGI (usually 0 or 1)
+    channel: parseInt(process.env.PTZ_CHANNEL || '0', 10),
+  },
+  
   // Firebase (optional - leave FIREBASE_SERVICE_ACCOUNT_PATH empty to disable)
   firebase: {
     enabled: !!process.env.FIREBASE_SERVICE_ACCOUNT_PATH,
