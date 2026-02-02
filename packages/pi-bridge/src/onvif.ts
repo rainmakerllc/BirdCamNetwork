@@ -55,10 +55,30 @@ function createProbeMessage(): string {
 </soap:Envelope>`;
 }
 
+// Time offset to compensate for camera clock drift (in milliseconds)
+let cameraTimeOffset = 0;
+
+/**
+ * Set the time offset between local time and camera time
+ * Positive = camera is ahead, Negative = camera is behind
+ */
+export function setCameraTimeOffset(offsetMs: number): void {
+  cameraTimeOffset = offsetMs;
+  console.log(`[ONVIF] Camera time offset set to ${offsetMs}ms (${(offsetMs / 1000 / 60).toFixed(1)} minutes)`);
+}
+
+/**
+ * Get the current time adjusted for camera offset
+ */
+function getCameraAdjustedTime(): Date {
+  return new Date(Date.now() + cameraTimeOffset);
+}
+
 // SOAP request with ONVIF auth
 function createAuthHeader(username: string, password: string): { header: string; created: string; nonce64: string } {
   const nonce = crypto.randomBytes(16);
-  const created = new Date().toISOString();
+  // Use camera-adjusted time for WS-Security timestamp
+  const created = getCameraAdjustedTime().toISOString();
   
   // WS-Security UsernameToken with password digest
   const sha1 = crypto.createHash('sha1');
@@ -236,6 +256,57 @@ export async function discoverCameras(timeoutMs = 5000): Promise<DiscoveredCamer
 }
 
 /**
+ * Detect camera time offset by querying system date without auth
+ * This helps when camera clock is not synced with the Pi
+ */
+export async function detectCameraTimeOffset(host: string, port: number = 80): Promise<number> {
+  const baseUrl = `http://${host}:${port}/onvif/device_service`;
+  
+  // GetSystemDateAndTime doesn't require auth on most cameras
+  const body = `<tds:GetSystemDateAndTime xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>`;
+  
+  try {
+    const localTimeBefore = Date.now();
+    const response = await soapRequest(baseUrl, 'GetSystemDateAndTime', body);
+    const localTimeAfter = Date.now();
+    const localTime = (localTimeBefore + localTimeAfter) / 2;
+    
+    // Extract camera time from response
+    const hour = extractValue(response, 'Hour');
+    const minute = extractValue(response, 'Minute');
+    const second = extractValue(response, 'Second');
+    const year = extractValue(response, 'Year');
+    const month = extractValue(response, 'Month');
+    const day = extractValue(response, 'Day');
+    
+    if (hour && minute && second && year && month && day) {
+      // Construct camera time (assuming UTC)
+      const cameraTime = new Date(Date.UTC(
+        parseInt(year),
+        parseInt(month) - 1,
+        parseInt(day),
+        parseInt(hour),
+        parseInt(minute),
+        parseInt(second)
+      )).getTime();
+      
+      const offset = cameraTime - localTime;
+      console.log(`[ONVIF] Camera time offset: ${(offset / 1000).toFixed(1)}s (${(offset / 1000 / 60).toFixed(1)} min)`);
+      
+      // Only apply offset if significant (> 5 seconds)
+      if (Math.abs(offset) > 5000) {
+        setCameraTimeOffset(offset);
+        return offset;
+      }
+    }
+  } catch (err) {
+    console.warn('[ONVIF] Could not detect camera time, using local time:', (err as Error).message);
+  }
+  
+  return 0;
+}
+
+/**
  * Connect to an ONVIF camera and get its stream URLs
  */
 export async function connectCamera(
@@ -248,6 +319,9 @@ export async function connectCamera(
   const mediaUrl = `http://${host}:${port}/onvif/media_service`;
   
   console.log(`[ONVIF] Connecting to ${host}:${port}...`);
+  
+  // Try to detect and compensate for camera time offset
+  await detectCameraTimeOffset(host, port);
   
   // Get device info
   const deviceInfoBody = `<tds:GetDeviceInformation xmlns:tds="http://www.onvif.org/ver10/device/wsdl"/>`;
