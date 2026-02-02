@@ -84,8 +84,8 @@ async function main() {
   
   // Validate configuration (allow missing Firebase in debug mode)
   const errors = validateConfig();
-  const firebaseErrors = errors.filter(e => e.includes('Firebase') || e.includes('firebase'));
-  const otherErrors = errors.filter(e => !e.includes('Firebase') && !e.includes('firebase'));
+  const firebaseErrors = errors.filter(e => e.toLowerCase().includes('firebase'));
+  const otherErrors = errors.filter(e => !e.toLowerCase().includes('firebase'));
   
   if (otherErrors.length > 0) {
     console.error('[Main] Configuration errors:');
