@@ -2,18 +2,32 @@
 
 🐦 **Connect your IP camera to the BirdCam Network** via Raspberry Pi.
 
-This bridge software runs on a Raspberry Pi, connects to your local IP camera's RTSP stream, transcodes it to HLS for web compatibility, and exposes it to the BirdCam Network through a Cloudflare tunnel.
+A feature-rich bridge that connects IP cameras to the cloud with ONVIF support, motion detection, PTZ control, and a beautiful web dashboard.
 
-## Features
+## ✨ Features
 
 - 📹 **RTSP → HLS Transcoding** - Converts your camera's RTSP stream to web-compatible HLS
-- 🐦 **Bird Detection** - BirdNET integration for automatic bird species identification
-- 🎬 **Clip Recording** - Captures video clips when birds are detected
 - 🎯 **ONVIF Support** - Auto-discover cameras and get stream URLs automatically
+- 🔍 **Motion Detection** - Automatic motion sensing with configurable sensitivity
+- 🎬 **Clip Recording** - Automatic recording on motion events with storage management
+- 📸 **Snapshots** - Manual and automatic snapshot capture
+- 🎮 **PTZ Control** - Pan/Tilt/Zoom for supported cameras via ONVIF
+- 🖥️ **Web Dashboard** - Beautiful local UI for camera management
 - 🌍 **Cloudflare Tunnel** - Automatic NAT traversal and dynamic DNS (free tier)
 - 🔗 **Auto-Registration** - Automatically registers with BirdCam Network
 - 💓 **Health Monitoring** - Regular heartbeats and status updates
 - 🔄 **Auto-Restart** - Automatically recovers from stream interruptions
+
+## 🖼️ Web Dashboard
+
+The built-in dashboard provides:
+- Live video stream with HLS.js
+- PTZ controls (arrow buttons + zoom)
+- Snapshot and recording buttons
+- Recent clips gallery with thumbnails
+- Storage and status monitoring
+
+Access at `http://<pi-ip>:8080`
 
 ## Requirements
 
@@ -21,33 +35,7 @@ This bridge software runs on a Raspberry Pi, connects to your local IP camera's 
 - Raspberry Pi OS (64-bit recommended)
 - Node.js 18+
 - FFmpeg
-- IP Camera with RTSP support
-
-## Quick Install
-
-```bash
-# SSH into your Pi, then run:
-curl -fsSL https://raw.githubusercontent.com/birdcam/pi-bridge/main/install.sh | sudo bash
-```
-
-Or install manually:
-
-```bash
-# Install dependencies
-sudo apt-get update
-sudo apt-get install -y ffmpeg nodejs npm
-
-# Install cloudflared
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64 \
-  -o /usr/local/bin/cloudflared
-sudo chmod +x /usr/local/bin/cloudflared
-
-# Clone and install
-git clone https://github.com/birdcam/pi-bridge.git
-cd pi-bridge
-npm install
-npm run build
-```
+- IP Camera with RTSP support (ONVIF recommended)
 
 ## Quick Setup (Recommended)
 
@@ -70,6 +58,33 @@ This will:
 npm run discover
 ```
 
+## Quick Install
+
+```bash
+# SSH into your Pi, then run:
+curl -fsSL https://raw.githubusercontent.com/birdcam/pi-bridge/main/install.sh | sudo bash
+```
+
+Or install manually:
+
+```bash
+# Install dependencies
+sudo apt-get update
+sudo apt-get install -y ffmpeg nodejs npm
+
+# Install cloudflared (optional, for tunnel)
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64 \
+  -o /usr/local/bin/cloudflared
+sudo chmod +x /usr/local/bin/cloudflared
+
+# Clone and install
+git clone https://github.com/rainmakerllc/BirdCamNetwork.git
+cd BirdCamNetwork/packages/pi-bridge
+npm install
+npm run build
+npm run setup  # Interactive setup wizard
+```
+
 ## Manual Configuration
 
 Copy `.env.example` to `.env` and configure:
@@ -78,149 +93,6 @@ Copy `.env.example` to `.env` and configure:
 cp .env.example .env
 nano .env
 ```
-
-### Required Settings
-
-```env
-# Your camera's RTSP URL
-CAMERA_RTSP_URL=rtsp://admin:password@192.168.1.100:554/stream1
-
-# Camera name (shown in dashboard)
-CAMERA_NAME=Backyard Feeder Cam
-
-# Firebase service account (download from Firebase Console)
-FIREBASE_SERVICE_ACCOUNT_PATH=/home/pi/firebase-service-account.json
-```
-
-### Cloudflare Tunnel (Recommended)
-
-For external access without port forwarding:
-
-1. Create a free Cloudflare account
-2. Go to [Cloudflare Zero Trust](https://one.dash.cloudflare.com)
-3. Create a tunnel → Get the token
-4. Add to your `.env`:
-
-```env
-USE_CLOUDFLARE_TUNNEL=true
-CLOUDFLARE_TUNNEL_TOKEN=your-token-here
-CLOUDFLARE_TUNNEL_HOSTNAME=camera.yourdomain.com
-```
-
-Or use a random URL (no token needed):
-
-```env
-USE_CLOUDFLARE_TUNNEL=true
-# Leave CLOUDFLARE_TUNNEL_TOKEN empty for random trycloudflare.com URL
-```
-
-## Running
-
-### Development
-
-```bash
-npm run dev
-```
-
-### Production
-
-```bash
-npm run build
-npm start
-```
-
-### As a Service
-
-```bash
-# Install and enable
-sudo cp birdcam-bridge.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable birdcam-bridge
-sudo systemctl start birdcam-bridge
-
-# View logs
-sudo journalctl -u birdcam-bridge -f
-```
-
-## Stream Access
-
-Once running, your stream is available at:
-
-- **Local**: `http://<pi-ip>:8080/stream.m3u8`
-- **Public** (with tunnel): `https://your-tunnel-url/stream.m3u8`
-- **Player page**: `http://<pi-ip>:8080/`
-
-## Bird Detection
-
-The Pi Bridge uses [BirdNET](https://github.com/kahst/BirdNET-Analyzer) for automatic bird species identification. When a bird is detected, it:
-
-1. 🎤 Captures audio from the RTSP stream
-2. 🔍 Analyzes with BirdNET ML model
-3. 📹 Records a short video clip
-4. ☁️ Uploads to Firebase Storage
-5. 📊 Updates detection records in Firestore
-
-### Setup BirdNET
-
-```bash
-# Install Python dependencies
-pip install birdnetlib
-
-# Or install BirdNET-Analyzer directly
-pip install birdnet-analyzer
-```
-
-### Configuration
-
-```env
-# Enable detection (default: true)
-BIRD_DETECTION_ENABLED=true
-
-# Minimum confidence threshold (0-1)
-DETECTION_MIN_CONFIDENCE=0.7
-
-# Your location (improves accuracy by filtering likely species)
-LOCATION_LATITUDE=40.7128
-LOCATION_LONGITUDE=-74.0060
-```
-
-### Clip Recording
-
-When a bird is detected, the bridge records a clip:
-
-```env
-CLIP_RECORDING_ENABLED=true
-CLIP_DURATION=15        # seconds
-MAX_CLIPS=100           # auto-cleanup oldest
-MAX_STORAGE_MB=1024     # 1GB limit
-```
-
-## API Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /` | Simple HLS player page |
-| `GET /stream.m3u8` | HLS manifest |
-| `GET /segment*.ts` | HLS video segments |
-| `GET /health` | Health check with stream stats |
-| `GET /info` | Device and stream info |
-| `GET /detect` | Trigger manual bird detection |
-| `POST /record` | Record a clip manually |
-| `GET /snapshot` | Take a snapshot |
-| `GET /clips` | List all recorded clips |
-| `GET /clips/:id.mp4` | Download a clip |
-| `GET /clips/:id.jpg` | Get clip thumbnail |
-
-## Supported Cameras
-
-Most IP cameras with RTSP support work. Tested with:
-
-- Wyze Cam (with RTSP firmware)
-- Reolink
-- Amcrest
-- Hikvision
-- Dahua
-- Any ONVIF-compatible camera
 
 ### Using ONVIF (Recommended)
 
@@ -246,39 +118,175 @@ ONVIF_USERNAME=admin
 ONVIF_PASSWORD=your-password
 ```
 
-The bridge will:
-1. Connect to the ONVIF device
-2. List available profiles (main stream, substream, etc.)
-3. Auto-select the highest resolution stream
-4. Extract the RTSP URL with proper authentication
-
-**Select a specific profile:**
+### Motion Detection & Recording
 
 ```env
-ONVIF_PROFILE_TOKEN=Profile_1
+# Enable motion detection
+MOTION_DETECTION_ENABLED=true
+MOTION_SENSITIVITY=50  # 0-100
+MOTION_COOLDOWN_MS=5000
+
+# Recording storage
+CLIPS_DIR=/var/birdcam/clips
+SNAPSHOTS_DIR=/var/birdcam/snapshots
+RETENTION_DAYS=7
+MAX_STORAGE_MB=10000
 ```
 
-Run once with `DEBUG=true` to see available profiles and their tokens.
+### Cloudflare Tunnel (Recommended)
 
-### Finding Your RTSP URL (Manual)
+For external access without port forwarding:
 
-If ONVIF isn't available, common RTSP URL formats:
+1. Create a free Cloudflare account
+2. Go to [Cloudflare Zero Trust](https://one.dash.cloudflare.com)
+3. Create a tunnel → Get the token
+4. Add to your `.env`:
+
+```env
+USE_CLOUDFLARE_TUNNEL=true
+CLOUDFLARE_TUNNEL_TOKEN=your-token-here
+```
+
+## Running
+
+### Development
+
+```bash
+npm run dev
+```
+
+### Production
+
+```bash
+npm run build
+npm start
+```
+
+### As a Service
+
+```bash
+# Create service file
+sudo tee /etc/systemd/system/birdcam-bridge.service << EOF
+[Unit]
+Description=BirdCam Pi Bridge
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/BirdCamNetwork/packages/pi-bridge
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start
+sudo systemctl daemon-reload
+sudo systemctl enable birdcam-bridge
+sudo systemctl start birdcam-bridge
+
+# View logs
+sudo journalctl -u birdcam-bridge -f
+```
+
+## API Reference
+
+### Stream
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | Web dashboard |
+| `GET /stream.m3u8` | HLS manifest |
+| `GET /segment*.ts` | HLS video segments |
+
+### Status
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health` | Health check with stats |
+| `GET /info` | Device and camera info |
+
+### Snapshots
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/snapshot` | Capture snapshot |
+| `GET /api/snapshot/latest` | Get latest snapshot image |
+| `GET /api/snapshots` | List all snapshots |
+| `GET /api/snapshots/:id` | Get specific snapshot |
+
+### Recording
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/recording/start` | Start recording |
+| `POST /api/recording/stop` | Stop recording |
+| `GET /api/recording/status` | Recording status |
+| `GET /api/clips` | List all clips |
+| `GET /api/clips/:id/video` | Download clip video |
+| `GET /api/clips/:id/thumbnail` | Get clip thumbnail |
+| `DELETE /api/clips/:id` | Delete a clip |
+
+### Motion Detection
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/motion/config` | Get motion config |
+| `POST /api/motion/config` | Update motion config |
+| `GET /api/motion/status` | Motion detection status |
+
+### PTZ Control
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/ptz/capabilities` | Camera PTZ capabilities |
+| `GET /api/ptz/status` | Current position |
+| `POST /api/ptz/move` | Move camera (pan, tilt, zoom) |
+| `POST /api/ptz/stop` | Stop movement |
+| `POST /api/ptz/home` | Go to home position |
+| `GET /api/ptz/presets` | List presets |
+| `POST /api/ptz/presets/:token` | Go to preset |
+| `PUT /api/ptz/presets` | Save new preset |
+
+### PTZ Move Body
+
+```json
+{
+  "pan": 0.5,    // -1 to 1 (left to right)
+  "tilt": 0.5,   // -1 to 1 (down to up)
+  "zoom": 0.0,   // -1 to 1 (out to in)
+  "type": "continuous"  // or "absolute", "relative"
+}
+```
+
+## Supported Cameras
+
+Most IP cameras with RTSP support work. Tested with:
+
+- Wyze Cam (with RTSP firmware)
+- Reolink
+- Amcrest
+- Hikvision
+- Dahua
+- Any ONVIF-compatible camera
+
+PTZ control requires an ONVIF-compatible camera with PTZ support.
+
+## Architecture
 
 ```
-# Generic
-rtsp://username:password@ip:554/stream1
-
-# Wyze
-rtsp://username:password@ip:8554/live
-
-# Reolink
-rtsp://username:password@ip:554/h264Preview_01_main
-
-# Hikvision
-rtsp://username:password@ip:554/Streaming/Channels/101
-
-# Amcrest
-rtsp://username:password@ip:554/cam/realmonitor?channel=1&subtype=0
+┌──────────────┐     RTSP      ┌──────────────┐     HLS      ┌──────────────┐
+│  IP Camera   │──────────────▶│ Raspberry Pi │─────────────▶│  BirdCam     │
+│   (ONVIF)    │  (local LAN)  │  Pi Bridge   │  (tunnel)    │  Network     │
+└──────────────┘               └──────────────┘              └──────────────┘
+       ▲                              │
+       │ PTZ                          │ Motion Detection
+       │ Control                      │ Clip Recording
+       │                              │ Web Dashboard
+       └──────────────────────────────┘
 ```
 
 ## Troubleshooting
@@ -289,46 +297,23 @@ rtsp://username:password@ip:554/cam/realmonitor?channel=1&subtype=0
 2. Check FFmpeg can access: `ffprobe rtsp://...`
 3. Verify network connectivity between Pi and camera
 
+### ONVIF discovery not finding cameras
+
+1. Ensure camera ONVIF is enabled (check camera settings)
+2. Camera must be on the same network/VLAN as the Pi
+3. Try specifying ONVIF_HOST directly instead of auto-discover
+
+### PTZ not working
+
+1. Verify camera supports PTZ via ONVIF
+2. Check PTZ capabilities endpoint: `GET /api/ptz/capabilities`
+3. Some cameras require specific ONVIF profile versions
+
 ### High CPU usage
 
 - Reduce output bitrate: `OUTPUT_BITRATE=1500k`
 - Lower resolution: `OUTPUT_RESOLUTION=1280x720`
-- Use hardware encoding (if available)
-
-### Tunnel not connecting
-
-1. Verify cloudflared is installed: `cloudflared --version`
-2. Check token is correct
-3. View logs: `journalctl -u birdcam-bridge -f`
-
-## Architecture
-
-```
-┌──────────────┐     RTSP      ┌──────────────┐     HLS      ┌──────────────┐
-│  IP Camera   │──────────────▶│ Raspberry Pi │─────────────▶│  BirdCam     │
-│              │  (local LAN)  │  Pi Bridge   │  (tunnel)    │  Network     │
-└──────────────┘               └──────────────┘              └──────────────┘
-                                     │
-                               ┌─────┴─────┐
-                               │           │
-                          Audio│           │ Clips &
-                               ▼           │ Detections
-                        ┌──────────┐       │
-                        │ BirdNET  │       │
-                        │ (ML)     │       │
-                        └──────────┘       │
-                               │           │
-                           Detects         │
-                               │           │
-                               └─────┬─────┘
-                                     │
-                                     ▼
-                               ┌──────────────┐
-                               │   Firebase   │
-                               │  Firestore   │
-                               │  + Storage   │
-                               └──────────────┘
-```
+- Disable motion detection if not needed
 
 ## License
 
