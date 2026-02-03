@@ -80,13 +80,21 @@ export function subscribeToUserCameras(
     orderBy('createdAt', 'desc')
   );
 
-  return onSnapshot(q, (snapshot) => {
-    const cameras = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...convertTimestamps(doc.data() as Record<string, unknown>),
-    })) as Camera[];
-    callback(cameras);
-  });
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const cameras = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...convertTimestamps(doc.data() as Record<string, unknown>),
+      })) as Camera[];
+      callback(cameras);
+    },
+    (error) => {
+      console.error('Firestore subscription error:', error);
+      // Return empty array on error so UI shows empty state instead of loading
+      callback([]);
+    }
+  );
 }
 
 // Get single camera

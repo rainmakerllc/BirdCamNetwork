@@ -1272,6 +1272,7 @@ export function getDashboardV2Html(): string {
           <button class="tab active" onclick="switchSettingsTab('video')" data-settings-tab="video">📹 Video</button>
           <button class="tab" onclick="switchSettingsTab('notifications')" data-settings-tab="notifications">🔔 Alerts</button>
           <button class="tab" onclick="switchSettingsTab('detection')" data-settings-tab="detection">🐦 Detection</button>
+          <button class="tab" onclick="switchSettingsTab('apikeys')" data-settings-tab="apikeys">🔑 API Keys</button>
         </div>
         
         <!-- Video Settings -->
@@ -1366,8 +1367,58 @@ Scarlet Tanager"></textarea>
             <div class="text-xs text-muted" style="margin-top: 4px;">Get special alerts for these species</div>
           </div>
         </div>
+        
+        <!-- API Keys Settings -->
+        <div id="settings-apikeys" class="settings-panel" style="display: none;">
+          <div class="form-group">
+            <label class="form-label">Current API Key</label>
+            <div style="display: flex; gap: var(--space-2);">
+              <input type="text" class="form-input" id="current-api-key" readonly style="font-family: var(--font-mono); flex: 1;">
+              <button class="btn btn-secondary" onclick="copyApiKey()" title="Copy to clipboard">📋</button>
+            </div>
+            <div class="text-xs text-muted" style="margin-top: 4px;">Use this key for authenticated API requests</div>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Quick Access URL</label>
+            <div style="display: flex; gap: var(--space-2);">
+              <input type="text" class="form-input" id="dashboard-url" readonly style="font-family: var(--font-mono); font-size: 11px; flex: 1;">
+              <button class="btn btn-secondary" onclick="copyDashboardUrl()" title="Copy URL">📋</button>
+            </div>
+            <div class="text-xs text-muted" style="margin-top: 4px;">Bookmark this URL for quick access without login</div>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Stream URLs (for external apps)</label>
+            <div style="background: var(--bg-tertiary); border-radius: var(--radius-md); padding: var(--space-3); font-family: var(--font-mono); font-size: 11px; word-break: break-all;">
+              <div style="margin-bottom: var(--space-2);">
+                <span style="color: var(--text-tertiary);">HLS:</span><br>
+                <span id="hls-stream-url" style="color: var(--accent);"></span>
+              </div>
+              <div style="margin-bottom: var(--space-2);">
+                <span style="color: var(--text-tertiary);">WebRTC:</span><br>
+                <span id="webrtc-stream-url" style="color: var(--accent);"></span>
+              </div>
+              <div>
+                <span style="color: var(--text-tertiary);">go2rtc (local):</span><br>
+                <span id="go2rtc-stream-url" style="color: var(--text-secondary);"></span>
+              </div>
+            </div>
+          </div>
+          
+          <div style="border-top: 1px solid var(--border-subtle); padding-top: var(--space-4); margin-top: var(--space-4);">
+            <label class="form-label" style="color: var(--warning);">⚠️ Danger Zone</label>
+            <p class="text-xs text-muted" style="margin-bottom: var(--space-3);">
+              Regenerating the API key will invalidate the current key. 
+              You'll need to update any apps or bookmarks using the old key.
+            </p>
+            <button class="btn" style="background: var(--danger); color: white;" onclick="regenerateApiKey()">
+              🔄 Regenerate API Key
+            </button>
+          </div>
+        </div>
       </div>
-      <div class="modal-footer">
+      <div class="modal-footer" id="settings-footer">
         <button class="btn btn-secondary" onclick="closeSettings()">Cancel</button>
         <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
       </div>
@@ -1720,6 +1771,10 @@ Scarlet Tanager"></textarea>
       document.querySelectorAll('.settings-panel').forEach(p => p.style.display = 'none');
       document.querySelector(\`[data-settings-tab="\${tab}"]\`).classList.add('active');
       document.getElementById(\`settings-\${tab}\`).style.display = 'block';
+      
+      // Hide save/cancel for API keys tab (it has its own regenerate button)
+      const footer = document.getElementById('settings-footer');
+      footer.style.display = tab === 'apikeys' ? 'none' : 'flex';
     }
     
     async function loadSettings() {
@@ -1741,7 +1796,72 @@ Scarlet Tanager"></textarea>
         document.getElementById('notify-offline').checked = notify.onCameraOffline !== false;
         document.getElementById('notify-ntfy').value = notify.ntfy?.topic || '';
         document.getElementById('setting-rarespecies').value = (notify.rareSpecies || []).join('\\n');
+        
+        // API Key settings
+        loadApiKeySettings();
       } catch (err) {}
+    }
+    
+    async function loadApiKeySettings() {
+      try {
+        const res = await fetch('/api/auth/key');
+        const data = await res.json();
+        document.getElementById('current-api-key').value = data.apiKey || '';
+        
+        // Build URLs
+        const baseUrl = window.location.origin;
+        const apiKey = data.apiKey;
+        document.getElementById('dashboard-url').value = baseUrl + '/?api_key=' + apiKey;
+        document.getElementById('hls-stream-url').textContent = baseUrl + '/stream.m3u8?api_key=' + apiKey;
+        document.getElementById('webrtc-stream-url').textContent = baseUrl + '/api/webrtc?api_key=' + apiKey;
+        
+        // go2rtc URL (different port, no auth needed locally)
+        const go2rtcHost = window.location.hostname;
+        document.getElementById('go2rtc-stream-url').textContent = 'http://' + go2rtcHost + ':1984/stream.html?src=birdcam';
+      } catch (err) {
+        console.error('Failed to load API key settings:', err);
+      }
+    }
+    
+    function copyApiKey() {
+      const input = document.getElementById('current-api-key');
+      input.select();
+      document.execCommand('copy');
+      alert('✅ API key copied to clipboard!');
+    }
+    
+    function copyDashboardUrl() {
+      const input = document.getElementById('dashboard-url');
+      input.select();
+      document.execCommand('copy');
+      alert('✅ Dashboard URL copied to clipboard!');
+    }
+    
+    async function regenerateApiKey() {
+      if (!confirm('⚠️ Are you sure you want to regenerate the API key?\\n\\nThis will invalidate the current key. Any apps or bookmarks using it will stop working.')) {
+        return;
+      }
+      
+      try {
+        const res = await fetch('/api/auth/regenerate', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+          // Update displayed values
+          loadApiKeySettings();
+          
+          // Update current page URL with new key
+          const newUrl = window.location.origin + '/?api_key=' + data.apiKey;
+          alert('✅ API key regenerated!\\n\\nNew key: ' + data.apiKey + '\\n\\nBookmark the new URL to continue accessing the dashboard.');
+          
+          // Redirect to new URL
+          window.location.href = newUrl;
+        } else {
+          alert('❌ Failed to regenerate API key');
+        }
+      } catch (err) {
+        alert('❌ Error regenerating API key: ' + err.message);
+      }
     }
     
     async function saveSettings() {

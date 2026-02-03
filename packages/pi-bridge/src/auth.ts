@@ -84,20 +84,68 @@ function saveCredentialsFile(config: AuthConfig): void {
       mkdirSync(BIRDCAM_DIR, { recursive: true });
     }
     
-    const dashboardUrl = `http://localhost:8080/?api_key=${config.apiKey}`;
-    const content = `# BirdCam Credentials
+    // Get hostname for URLs
+    const hostname = process.env.HOSTNAME || 'birdnetwork';
+    const port = process.env.HLS_PORT || '8080';
+    const baseUrl = `http://${hostname}:${port}`;
+    const dashboardUrl = `${baseUrl}/?api_key=${config.apiKey}`;
+    
+    // WebRTC stream URL for camera setup (this is what you'd put in external apps)
+    const webrtcStreamUrl = `${baseUrl}/api/webrtc?api_key=${config.apiKey}`;
+    const hlsStreamUrl = `${baseUrl}/stream.m3u8?api_key=${config.apiKey}`;
+    const go2rtcUrl = `http://${hostname}:1984/stream.html?src=birdcam`;
+    
+    const content = `# ═══════════════════════════════════════════════════════════════
+# BirdCam Credentials
 # Generated: ${new Date().toISOString()}
 # Keep this file secure!
+# ═══════════════════════════════════════════════════════════════
 
+# ─────────────────────────────────────────────────────────────────
+# API KEY (use this for all authenticated requests)
+# ─────────────────────────────────────────────────────────────────
 API_KEY=${config.apiKey}
+
+# ─────────────────────────────────────────────────────────────────
+# BASIC AUTH (alternative to API key)
+# ─────────────────────────────────────────────────────────────────
 USERNAME=${config.username}
 PASSWORD=${config.password}
 
-# Quick Access URL (bookmark this):
-${dashboardUrl}
+# ═══════════════════════════════════════════════════════════════
+# QUICK ACCESS URLS
+# ═══════════════════════════════════════════════════════════════
 
-# Or use the API key header:
-# curl -H "X-API-Key: ${config.apiKey}" http://localhost:8080/health
+# Dashboard (bookmark this!):
+DASHBOARD_URL=${dashboardUrl}
+
+# ─────────────────────────────────────────────────────────────────
+# STREAM URLS (for camera setup on external apps/websites)
+# ─────────────────────────────────────────────────────────────────
+
+# HLS Stream (most compatible - works in browsers, VLC, etc):
+HLS_STREAM_URL=${hlsStreamUrl}
+
+# WebRTC Stream API (lowest latency):
+WEBRTC_API_URL=${webrtcStreamUrl}
+
+# go2rtc Direct (no auth required on local network):
+GO2RTC_STREAM_URL=${go2rtcUrl}
+
+# ─────────────────────────────────────────────────────────────────
+# API EXAMPLES
+# ─────────────────────────────────────────────────────────────────
+
+# Using API key in URL:
+# curl "${baseUrl}/health?api_key=${config.apiKey}"
+
+# Using API key in header:
+# curl -H "X-API-Key: ${config.apiKey}" ${baseUrl}/health
+
+# Using Basic Auth:
+# curl -u ${config.username}:${config.password} ${baseUrl}/health
+
+# ═══════════════════════════════════════════════════════════════
 `;
     
     writeFileSync(CREDENTIALS_FILE, content, { mode: 0o600 });
