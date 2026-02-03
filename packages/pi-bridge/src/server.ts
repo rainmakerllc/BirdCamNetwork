@@ -20,7 +20,7 @@ import type { AmcrestPtzController } from './amcrest-ptz.js';
 import { isGo2rtcRunning, proxyToGo2rtc, getGo2rtcApiPort } from './webrtc.js';
 import { getCameraTime, setCameraTime, checkTimeSync } from './onvif.js';
 import { getSettings, RESOLUTION_PRESETS, type VideoSettings } from './settings.js';
-import { initAuth, authMiddleware, isAuthConfigured, getApiKey } from './auth.js';
+import { initAuth, authMiddleware, isAuthConfigured, getApiKey, getCredentialsFilePath, regenerateApiKey } from './auth.js';
 import { getPresetManager } from './ptz-presets.js';
 import { getBirdTracker } from './bird-tracker.js';
 import { getDashboardV2Html } from './dashboard-v2.js';
@@ -103,6 +103,28 @@ app.get('/health', (req, res) => {
     motionDetection: motion.isRunning(),
     recording: recorder.isRecording(),
     storage: recorder.getStorageStats(),
+  });
+});
+
+// ==================== API Key Management ====================
+
+app.get('/api/auth/key', (req, res) => {
+  res.json({
+    apiKey: getApiKey(),
+    credentialsFile: getCredentialsFilePath(),
+    hint: 'Use ?api_key=YOUR_KEY in URL or X-API-Key header',
+    dashboardUrl: `http://localhost:8080/?api_key=${getApiKey()}`,
+  });
+});
+
+app.post('/api/auth/regenerate', (req, res) => {
+  const newKey = regenerateApiKey();
+  res.json({
+    success: true,
+    apiKey: newKey,
+    credentialsFile: getCredentialsFilePath(),
+    message: 'API key regenerated. Old key is now invalid.',
+    dashboardUrl: `http://localhost:8080/?api_key=${newKey}`,
   });
 });
 

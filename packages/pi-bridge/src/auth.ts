@@ -2,10 +2,14 @@
  * Authentication Module
  * 
  * Provides HTTP Basic Auth and API key authentication for the dashboard and API.
+ * Auto-generates and persists secure API keys for easy access.
  */
 
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 
 export interface AuthConfig {
   enabled: boolean;
@@ -27,18 +31,94 @@ const DEFAULT_CONFIG: AuthConfig = {
 
 let authConfig: AuthConfig = { ...DEFAULT_CONFIG };
 
+// Path for persisted API key
+const BIRDCAM_DIR = join(homedir(), '.birdcam');
+const API_KEY_FILE = join(BIRDCAM_DIR, 'api-key.txt');
+const CREDENTIALS_FILE = join(BIRDCAM_DIR, 'credentials.txt');
+
+/**
+ * Load or generate API key, persisting to file
+ */
+function loadOrCreateApiKey(): string {
+  // 1. Check environment variable first (highest priority)
+  if (process.env.API_KEY) {
+    return process.env.API_KEY;
+  }
+  
+  // 2. Check if key file exists
+  if (existsSync(API_KEY_FILE)) {
+    try {
+      const savedKey = readFileSync(API_KEY_FILE, 'utf-8').trim();
+      if (savedKey && savedKey.startsWith('birdcam_')) {
+        console.log('[Auth] 🔑 Loaded API key from', API_KEY_FILE);
+        return savedKey;
+      }
+    } catch (err) {
+      console.warn('[Auth] ⚠️  Could not read API key file:', err);
+    }
+  }
+  
+  // 3. Generate new secure API key
+  const newKey = generateApiKey();
+  
+  // 4. Save to file
+  try {
+    if (!existsSync(BIRDCAM_DIR)) {
+      mkdirSync(BIRDCAM_DIR, { recursive: true });
+    }
+    writeFileSync(API_KEY_FILE, newKey + '\n', { mode: 0o600 });
+    console.log('[Auth] 🔑 Generated new API key and saved to', API_KEY_FILE);
+  } catch (err) {
+    console.warn('[Auth] ⚠️  Could not save API key file:', err);
+  }
+  
+  return newKey;
+}
+
+/**
+ * Save all credentials to a readable file
+ */
+function saveCredentialsFile(config: AuthConfig): void {
+  try {
+    if (!existsSync(BIRDCAM_DIR)) {
+      mkdirSync(BIRDCAM_DIR, { recursive: true });
+    }
+    
+    const dashboardUrl = `http://localhost:8080/?api_key=${config.apiKey}`;
+    const content = `# BirdCam Credentials
+# Generated: ${new Date().toISOString()}
+# Keep this file secure!
+
+API_KEY=${config.apiKey}
+USERNAME=${config.username}
+PASSWORD=${config.password}
+
+# Quick Access URL (bookmark this):
+${dashboardUrl}
+
+# Or use the API key header:
+# curl -H "X-API-Key: ${config.apiKey}" http://localhost:8080/health
+`;
+    
+    writeFileSync(CREDENTIALS_FILE, content, { mode: 0o600 });
+    console.log('[Auth] 📄 Credentials saved to', CREDENTIALS_FILE);
+  } catch (err) {
+    console.warn('[Auth] ⚠️  Could not save credentials file:', err);
+  }
+}
+
 /**
  * Initialize auth configuration from environment
  */
 export function initAuth(): AuthConfig {
   const password = process.env.AUTH_PASSWORD || process.env.DASHBOARD_PASSWORD;
-  const apiKey = process.env.API_KEY;
+  const apiKey = loadOrCreateApiKey();
   
   authConfig = {
     enabled: process.env.AUTH_ENABLED !== 'false',
     username: process.env.AUTH_USERNAME || 'admin',
     password: password || '',
-    apiKey: apiKey || generateApiKey(),
+    apiKey: apiKey,
     realm: process.env.AUTH_REALM || 'BirdCam',
     excludePaths: ['/health', '/api/health'],
   };
@@ -47,13 +127,22 @@ export function initAuth(): AuthConfig {
     // Generate a random password if not set
     authConfig.password = generatePassword();
     console.log('[Auth] ⚠️  No AUTH_PASSWORD set - generated random password');
-    console.log('[Auth] ════════════════════════════════════════');
-    console.log(`[Auth]   Username: ${authConfig.username}`);
-    console.log(`[Auth]   Password: ${authConfig.password}`);
-    console.log(`[Auth]   API Key:  ${authConfig.apiKey}`);
-    console.log('[Auth] ════════════════════════════════════════');
-    console.log('[Auth] Add to .env: AUTH_PASSWORD=your_secure_password');
   }
+  
+  // Always save/update credentials file
+  saveCredentialsFile(authConfig);
+  
+  // Display credentials on startup
+  console.log('[Auth] ════════════════════════════════════════════════════════');
+  console.log('[Auth]   🔐 Authentication Credentials');
+  console.log('[Auth] ────────────────────────────────────────────────────────');
+  console.log(`[Auth]   Username: ${authConfig.username}`);
+  console.log(`[Auth]   Password: ${authConfig.password}`);
+  console.log(`[Auth]   API Key:  ${authConfig.apiKey}`);
+  console.log('[Auth] ────────────────────────────────────────────────────────');
+  console.log(`[Auth]   📁 Saved to: ${CREDENTIALS_FILE}`);
+  console.log(`[Auth]   🔗 Quick URL: http://localhost:8080/?api_key=${authConfig.apiKey}`);
+  console.log('[Auth] ════════════════════════════════════════════════════════');
   
   return authConfig;
 }
@@ -173,4 +262,36 @@ export function isAuthConfigured(): boolean {
  */
 export function getApiKey(): string {
   return authConfig.apiKey;
+}
+
+/**
+ * Get the path to the credentials file
+ */
+export function getCredentialsFilePath(): string {
+  return CREDENTIALS_FILE;
+}
+
+/**
+ * Get the path to the API key file
+ */
+export function getApiKeyFilePath(): string {
+  return API_KEY_FILE;
+}
+
+/**
+ * Regenerate API key and save to file
+ */
+export function regenerateApiKey(): string {
+  const newKey = generateApiKey();
+  authConfig.apiKey = newKey;
+  
+  try {
+    writeFileSync(API_KEY_FILE, newKey + '\n', { mode: 0o600 });
+    saveCredentialsFile(authConfig);
+    console.log('[Auth] 🔑 Regenerated API key');
+  } catch (err) {
+    console.warn('[Auth] ⚠️  Could not save new API key:', err);
+  }
+  
+  return newKey;
 }
