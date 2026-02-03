@@ -213,8 +213,9 @@ export class AmcrestPtzController {
     if (this.capabilities) return this.capabilities;
 
     try {
-      // Test if PTZ is available by querying status
-      const path = `/cgi-bin/ptz.cgi?action=getStatus&channel=${this.channel}`;
+      // Test if PTZ is available by sending a safe stop command
+      // (getStatus doesn't work on all Amcrest cameras)
+      const path = `/cgi-bin/ptz.cgi?action=stop&channel=${this.channel}&code=Up&arg1=0&arg2=0&arg3=0`;
       const response = await amcrestRequest(
         this.host,
         this.port,
@@ -223,7 +224,9 @@ export class AmcrestPtzController {
         this.password
       );
 
-      if (response.success && response.data) {
+      // Check if response contains "OK" (successful PTZ command)
+      if (response.success && response.data && response.data.includes('OK')) {
+        console.log('[AmcrestPTZ] PTZ test successful - camera supports PTZ');
         this.capabilities = {
           supported: true,
           absoluteMove: false, // Amcrest CGI doesn't support absolute positioning well
@@ -233,6 +236,7 @@ export class AmcrestPtzController {
           home: true,
         };
       } else {
+        console.log('[AmcrestPTZ] PTZ test failed:', response.error || response.data);
         this.capabilities = {
           supported: false,
           absoluteMove: false,
