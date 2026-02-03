@@ -525,63 +525,60 @@ app.post('/api/ptz/test', asyncHandler(async (req, res) => {
   
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
   
-  // Cast to any to access common methods - both controllers have these
-  const ptz = ptzController as any;
-  
   console.log('[PTZ Test] Starting PTZ test cycle...');
   
   try {
-    // Pan Left
+    // Pan Left - use continuousMove(pan, tilt, zoom)
     console.log('[PTZ Test] Pan Left');
-    let success = await ptz.move({ pan: -0.5, tilt: 0 });
+    let success = await ptzController.continuousMove(-0.5, 0, 0);
     results.push({ action: 'Pan Left', success });
     await sleep(duration);
-    await ptz.stop();
+    await ptzController.stop();
     await sleep(300);
     
     // Pan Right
     console.log('[PTZ Test] Pan Right');
-    success = await ptz.move({ pan: 0.5, tilt: 0 });
+    success = await ptzController.continuousMove(0.5, 0, 0);
     results.push({ action: 'Pan Right', success });
     await sleep(duration);
-    await ptz.stop();
+    await ptzController.stop();
     await sleep(300);
     
     // Tilt Up
     console.log('[PTZ Test] Tilt Up');
-    success = await ptz.move({ pan: 0, tilt: 0.5 });
+    success = await ptzController.continuousMove(0, 0.5, 0);
     results.push({ action: 'Tilt Up', success });
     await sleep(duration);
-    await ptz.stop();
+    await ptzController.stop();
     await sleep(300);
     
     // Tilt Down
     console.log('[PTZ Test] Tilt Down');
-    success = await ptz.move({ pan: 0, tilt: -0.5 });
+    success = await ptzController.continuousMove(0, -0.5, 0);
     results.push({ action: 'Tilt Down', success });
     await sleep(duration);
-    await ptz.stop();
+    await ptzController.stop();
     await sleep(300);
     
     // Zoom In
     console.log('[PTZ Test] Zoom In');
-    success = await ptz.zoom(0.5);
+    success = await ptzController.continuousMove(0, 0, 0.5);
     results.push({ action: 'Zoom In', success });
     await sleep(duration);
-    await ptz.stop();
+    await ptzController.stop();
     await sleep(300);
     
     // Zoom Out
     console.log('[PTZ Test] Zoom Out');
-    success = await ptz.zoom(-0.5);
+    success = await ptzController.continuousMove(0, 0, -0.5);
     results.push({ action: 'Zoom Out', success });
     await sleep(duration);
-    await ptz.stop();
+    await ptzController.stop();
     await sleep(300);
     
     // Go Home
     console.log('[PTZ Test] Go Home');
-    success = await ptz.goHome();
+    success = await ptzController.goHome();
     results.push({ action: 'Go Home', success });
     
     console.log('[PTZ Test] Test cycle complete!');
