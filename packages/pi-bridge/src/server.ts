@@ -513,6 +513,95 @@ app.put('/api/ptz/presets', asyncHandler(async (req, res) => {
   res.json({ success: !!token, token });
 }));
 
+// PTZ Test - cycles through all PTZ functions
+app.post('/api/ptz/test', asyncHandler(async (req, res) => {
+  if (!ptzController) {
+    res.status(400).json({ success: false, error: 'PTZ not available' });
+    return;
+  }
+  
+  const duration = req.body?.duration || 1500; // ms per movement
+  const results: { action: string; success: boolean }[] = [];
+  
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  
+  // Cast to any to access common methods - both controllers have these
+  const ptz = ptzController as any;
+  
+  console.log('[PTZ Test] Starting PTZ test cycle...');
+  
+  try {
+    // Pan Left
+    console.log('[PTZ Test] Pan Left');
+    let success = await ptz.move({ pan: -0.5, tilt: 0 });
+    results.push({ action: 'Pan Left', success });
+    await sleep(duration);
+    await ptz.stop();
+    await sleep(300);
+    
+    // Pan Right
+    console.log('[PTZ Test] Pan Right');
+    success = await ptz.move({ pan: 0.5, tilt: 0 });
+    results.push({ action: 'Pan Right', success });
+    await sleep(duration);
+    await ptz.stop();
+    await sleep(300);
+    
+    // Tilt Up
+    console.log('[PTZ Test] Tilt Up');
+    success = await ptz.move({ pan: 0, tilt: 0.5 });
+    results.push({ action: 'Tilt Up', success });
+    await sleep(duration);
+    await ptz.stop();
+    await sleep(300);
+    
+    // Tilt Down
+    console.log('[PTZ Test] Tilt Down');
+    success = await ptz.move({ pan: 0, tilt: -0.5 });
+    results.push({ action: 'Tilt Down', success });
+    await sleep(duration);
+    await ptz.stop();
+    await sleep(300);
+    
+    // Zoom In
+    console.log('[PTZ Test] Zoom In');
+    success = await ptz.zoom(0.5);
+    results.push({ action: 'Zoom In', success });
+    await sleep(duration);
+    await ptz.stop();
+    await sleep(300);
+    
+    // Zoom Out
+    console.log('[PTZ Test] Zoom Out');
+    success = await ptz.zoom(-0.5);
+    results.push({ action: 'Zoom Out', success });
+    await sleep(duration);
+    await ptz.stop();
+    await sleep(300);
+    
+    // Go Home
+    console.log('[PTZ Test] Go Home');
+    success = await ptz.goHome();
+    results.push({ action: 'Go Home', success });
+    
+    console.log('[PTZ Test] Test cycle complete!');
+    
+    const allPassed = results.every(r => r.success);
+    res.json({ 
+      success: allPassed, 
+      message: allPassed ? 'All PTZ functions working!' : 'Some PTZ functions failed',
+      results 
+    });
+  } catch (err) {
+    console.error('[PTZ Test] Error:', err);
+    res.status(500).json({ 
+      success: false, 
+      error: (err as Error).message,
+      results 
+    });
+  }
+}));
+
 // ==================== Camera Time ====================
 
 // Get camera time

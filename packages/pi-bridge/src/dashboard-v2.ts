@@ -1073,6 +1073,10 @@ export function getDashboardV2Html(): string {
             <button class="ptz-btn" data-zoom="0.3">🔍+</button>
             <button class="ptz-btn" data-zoom="-0.3">🔍−</button>
           </div>
+          
+          <button class="ptz-btn test" onclick="runPtzTest()" title="Test all PTZ functions" style="background: var(--warning); padding: 8px 12px; font-size: 12px;">
+            🧪 Test
+          </button>
         </div>
         
         <!-- Video Toolbar -->
@@ -1532,6 +1536,55 @@ Scarlet Tanager"></textarea>
     
     async function ptzHome() {
       await fetch('/api/ptz/home', { method: 'POST' });
+    }
+    
+    async function runPtzTest() {
+      const testBtn = document.querySelector('.ptz-btn.test');
+      const originalText = testBtn.innerHTML;
+      
+      testBtn.innerHTML = '⏳ Testing...';
+      testBtn.disabled = true;
+      testBtn.style.opacity = '0.7';
+      
+      try {
+        const res = await fetch('/api/ptz/test', { 
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ duration: 1500 })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+          testBtn.innerHTML = '✅ Pass!';
+          testBtn.style.background = 'var(--success)';
+          
+          // Show results
+          const resultText = data.results.map(r => 
+            (r.success ? '✅' : '❌') + ' ' + r.action
+          ).join('\\n');
+          alert('PTZ Test Complete!\\n\\n' + resultText);
+        } else {
+          testBtn.innerHTML = '❌ Failed';
+          testBtn.style.background = 'var(--danger)';
+          
+          const resultText = data.results?.map(r => 
+            (r.success ? '✅' : '❌') + ' ' + r.action
+          ).join('\\n') || data.error;
+          alert('PTZ Test Failed\\n\\n' + resultText);
+        }
+      } catch (err) {
+        testBtn.innerHTML = '❌ Error';
+        testBtn.style.background = 'var(--danger)';
+        alert('PTZ Test Error: ' + err.message);
+      }
+      
+      // Reset button after 3 seconds
+      setTimeout(() => {
+        testBtn.innerHTML = originalText;
+        testBtn.disabled = false;
+        testBtn.style.opacity = '1';
+        testBtn.style.background = 'var(--warning)';
+      }, 3000);
     }
 
     // ==================== Recording & Snapshots ====================
