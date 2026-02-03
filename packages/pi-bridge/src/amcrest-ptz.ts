@@ -8,6 +8,7 @@
  */
 
 import http from 'http';
+import crypto from 'crypto';
 import { config } from './config.js';
 import type { PtzCapabilities, PtzPosition, PtzPreset } from './ptz.js';
 
@@ -38,6 +39,83 @@ interface AmcrestResponse {
   error?: string;
 }
 
+// Parse WWW-Authenticate header for Digest auth
+function parseDigestChallenge(header: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  const regex = /(\w+)=(?:"([^"]+)"|([^\s,]+))/g;
+  let match;
+  while ((match = regex.exec(header)) !== null) {
+    result[match[1]] = match[2] || match[3];
+  }
+  return result;
+}
+
+// Generate Digest auth header
+function generateDigestAuth(
+  username: string,
+  password: string,
+  method: string,
+  uri: string,
+  challenge: Record<string, string>
+): string {
+  const { realm, nonce, qop, opaque } = challenge;
+  const nc = '00000001';
+  const cnonce = crypto.randomBytes(8).toString('hex');
+  
+  // HA1 = MD5(username:realm:password)
+  const ha1 = crypto.createHash('md5').update(`${username}:${realm}:${password}`).digest('hex');
+  
+  // HA2 = MD5(method:uri)
+  const ha2 = crypto.createHash('md5').update(`${method}:${uri}`).digest('hex');
+  
+  // Response = MD5(HA1:nonce:nc:cnonce:qop:HA2)
+  let response: string;
+  if (qop) {
+    response = crypto.createHash('md5').update(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`).digest('hex');
+  } else {
+    response = crypto.createHash('md5').update(`${ha1}:${nonce}:${ha2}`).digest('hex');
+  }
+  
+  let authHeader = `Digest username="${username}", realm="${realm}", nonce="${nonce}", uri="${uri}", response="${response}"`;
+  if (qop) authHeader += `, qop=${qop}, nc=${nc}, cnonce="${cnonce}"`;
+  if (opaque) authHeader += `, opaque="${opaque}"`;
+  
+  return authHeader;
+}
+
+// Make HTTP request with optional retry for Digest auth
+function makeHttpRequest(
+  host: string,
+  port: number,
+  path: string,
+  headers: Record<string, string>,
+  timeout: number
+): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; data: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: host,
+      port,
+      path,
+      method: 'GET',
+      headers,
+      timeout,
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        resolve({ statusCode: res.statusCode || 0, headers: res.headers, data });
+      });
+    });
+    
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Request timeout'));
+    });
+    req.end();
+  });
+}
+
 async function amcrestRequest(
   host: string,
   port: number,
@@ -46,43 +124,37 @@ async function amcrestRequest(
   password: string,
   timeout = 10000
 ): Promise<AmcrestResponse> {
-  return new Promise((resolve) => {
-    const auth = Buffer.from(`${username}:${password}`).toString('base64');
+  try {
+    // First request - may get 401 with Digest challenge
+    const firstResponse = await makeHttpRequest(host, port, path, {}, timeout);
     
-    const req = http.request({
-      hostname: host,
-      port,
-      path,
-      method: 'GET',
-      headers: {
-        'Authorization': `Basic ${auth}`,
-      },
-      timeout,
-    }, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode === 200) {
-          resolve({ success: true, data });
-        } else if (res.statusCode === 401) {
-          resolve({ success: false, error: 'Authentication failed' });
-        } else {
-          resolve({ success: false, error: `HTTP ${res.statusCode}: ${data}` });
-        }
-      });
-    });
+    if (firstResponse.statusCode === 200) {
+      return { success: true, data: firstResponse.data };
+    }
     
-    req.on('error', (err) => {
-      resolve({ success: false, error: err.message });
-    });
+    if (firstResponse.statusCode === 401) {
+      const wwwAuth = firstResponse.headers['www-authenticate'];
+      if (!wwwAuth || !wwwAuth.toLowerCase().includes('digest')) {
+        return { success: false, error: 'Digest auth not supported by camera' };
+      }
+      
+      // Parse challenge and retry with Digest auth
+      const challenge = parseDigestChallenge(wwwAuth);
+      const authHeader = generateDigestAuth(username, password, 'GET', path, challenge);
+      
+      const secondResponse = await makeHttpRequest(host, port, path, { 'Authorization': authHeader }, timeout);
+      
+      if (secondResponse.statusCode === 200) {
+        return { success: true, data: secondResponse.data };
+      } else {
+        return { success: false, error: `HTTP ${secondResponse.statusCode}: ${secondResponse.data}` };
+      }
+    }
     
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({ success: false, error: 'Request timeout' });
-    });
-    
-    req.end();
-  });
+    return { success: false, error: `HTTP ${firstResponse.statusCode}: ${firstResponse.data}` };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
 }
 
 export class AmcrestPtzController {
