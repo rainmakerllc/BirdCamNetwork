@@ -77,7 +77,9 @@ app.use(authMiddleware);
 let ptzController: PtzController | AmcrestPtzController | null = null;
 
 export function setPtzController(controller: PtzController | AmcrestPtzController): void {
+  console.log('[Server] setPtzController called:', controller ? 'controller provided' : 'null');
   ptzController = controller;
+  console.log('[Server] ptzController now set:', ptzController ? 'yes' : 'no');
 }
 
 // Middleware for API error handling
@@ -515,6 +517,7 @@ app.put('/api/ptz/presets', asyncHandler(async (req, res) => {
 
 // PTZ Test - cycles through all PTZ functions
 app.post('/api/ptz/test', asyncHandler(async (req, res) => {
+  console.log('[PTZ Test] Endpoint called, ptzController:', ptzController ? 'available' : 'null');
   if (!ptzController) {
     res.status(400).json({ success: false, error: 'PTZ not available' });
     return;
