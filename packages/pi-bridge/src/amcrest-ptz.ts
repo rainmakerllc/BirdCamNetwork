@@ -227,14 +227,17 @@ export class AmcrestPtzController {
       // Check if response contains "OK" (successful PTZ command)
       if (response.success && response.data && response.data.includes('OK')) {
         console.log('[AmcrestPTZ] PTZ test successful - camera supports PTZ');
+        // Note: Many Amcrest cameras don't support zoom/presets via CGI
+        // Test actual capabilities by trying commands
         this.capabilities = {
           supported: true,
-          absoluteMove: false, // Amcrest CGI doesn't support absolute positioning well
+          absoluteMove: false, // Amcrest CGI doesn't support absolute positioning
           relativeMove: false,
           continuousMove: true,
-          presets: true,
-          home: true,
-        };
+          presets: false,  // Not all cameras support this
+          home: false,     // Not all cameras support this
+          zoom: false,     // Many fixed-lens cameras don't have zoom
+        } as PtzCapabilities;
       } else {
         console.log('[AmcrestPTZ] PTZ test failed:', response.error || response.data);
         this.capabilities = {

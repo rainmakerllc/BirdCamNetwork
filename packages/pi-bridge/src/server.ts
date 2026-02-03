@@ -524,11 +524,15 @@ app.post('/api/ptz/test', asyncHandler(async (req, res) => {
   }
   
   const duration = req.body?.duration || 1500; // ms per movement
-  const results: { action: string; success: boolean }[] = [];
+  const results: { action: string; success: boolean; skipped?: boolean }[] = [];
   
   const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
   
+  // Get capabilities to skip unsupported features
+  const capabilities = await ptzController.getCapabilities();
+  
   console.log('[PTZ Test] Starting PTZ test cycle...');
+  console.log('[PTZ Test] Capabilities:', JSON.stringify(capabilities));
   
   try {
     // Pan Left - use continuousMove(pan, tilt, zoom)
@@ -563,26 +567,37 @@ app.post('/api/ptz/test', asyncHandler(async (req, res) => {
     await ptzController.stop();
     await sleep(300);
     
-    // Zoom In
-    console.log('[PTZ Test] Zoom In');
-    success = await ptzController.continuousMove(0, 0, 0.5);
-    results.push({ action: 'Zoom In', success });
-    await sleep(duration);
-    await ptzController.stop();
+    // Zoom In - skip if zoom not supported (many cameras have fixed lens)
+    if ((capabilities as any).zoom !== false) {
+      console.log('[PTZ Test] Zoom In');
+      success = await ptzController.continuousMove(0, 0, 0.5);
+      results.push({ action: 'Zoom In', success });
+      await sleep(duration);
+      await ptzController.stop();
+      await sleep(300);
+      
+      // Zoom Out
+      console.log('[PTZ Test] Zoom Out');
+      success = await ptzController.continuousMove(0, 0, -0.5);
+      results.push({ action: 'Zoom Out', success });
+      await sleep(duration);
+      await ptzController.stop();
+    } else {
+      console.log('[PTZ Test] Zoom skipped (not supported)');
+      results.push({ action: 'Zoom In', success: true, skipped: true });
+      results.push({ action: 'Zoom Out', success: true, skipped: true });
+    }
     await sleep(300);
     
-    // Zoom Out
-    console.log('[PTZ Test] Zoom Out');
-    success = await ptzController.continuousMove(0, 0, -0.5);
-    results.push({ action: 'Zoom Out', success });
-    await sleep(duration);
-    await ptzController.stop();
-    await sleep(300);
-    
-    // Go Home
-    console.log('[PTZ Test] Go Home');
-    success = await ptzController.goHome();
-    results.push({ action: 'Go Home', success });
+    // Go Home - skip if not supported
+    if (capabilities.home !== false) {
+      console.log('[PTZ Test] Go Home');
+      success = await ptzController.goHome();
+      results.push({ action: 'Go Home', success });
+    } else {
+      console.log('[PTZ Test] Go Home skipped (not supported)');
+      results.push({ action: 'Go Home', success: true, skipped: true });
+    }
     
     console.log('[PTZ Test] Test cycle complete!');
     
