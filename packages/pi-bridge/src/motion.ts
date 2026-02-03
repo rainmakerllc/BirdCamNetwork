@@ -23,6 +23,7 @@ export interface MotionConfig {
   threshold: number;        // Minimum % of pixels changed to trigger
   cooldownMs: number;       // Minimum time between events
   minDurationMs: number;    // Motion must persist for this long
+  debug?: boolean;          // Enable debug logging
   regions?: Array<{         // Detection regions (empty = full frame)
     x: number;
     y: number;
@@ -67,18 +68,22 @@ class MotionDetector extends EventEmitter {
     this.running = true;
     console.log('[Motion] Starting detection...');
 
-    // Use FFmpeg to extract frames and analyze for motion
-    // We use the 'select' filter to detect scene changes
+    // Use FFmpeg with scdet filter for reliable scene change detection
+    // The scdet filter detects scene changes and outputs to stderr
+    // t = threshold (0-1, lower = more sensitive), s = print scene score
     const sensitivity = this.config.sensitivity / 100;
-    const sceneThreshold = 1 - (sensitivity * 0.5); // Map 0-100 to scene detection threshold
+    // Map sensitivity 0-100 to threshold 0.5-0.05 (higher sensitivity = lower threshold)
+    const sceneThreshold = Math.max(0.05, 0.5 - (sensitivity * 0.45));
 
-    // Note: In Node spawn, we don't need shell quoting. The comma in the filter expression
-    // must be escaped with \ because FFmpeg uses commas as filter separators.
+    console.log(`[Motion] Using scdet threshold: ${sceneThreshold.toFixed(3)} (sensitivity: ${this.config.sensitivity})`);
+
+    // Use scdet filter which reliably outputs scene change events
+    // The filter outputs: [Parsed_scdet_0 @ ...] lavfi.scd.mafd=X lavfi.scd.score=X lavfi.scd.time=X
     this.ffmpegProcess = spawn(config.ffmpegPath, [
       '-rtsp_transport', 'tcp',
       '-i', rtspUrl,
-      '-vf', `select=gt(scene\\,${sceneThreshold.toFixed(2)}),metadata=print:file=-`,
-      '-fps_mode', 'vfr',  // Use -fps_mode instead of deprecated -vsync
+      '-vf', `scdet=t=${sceneThreshold.toFixed(3)}:s=1`,
+      '-fps_mode', 'vfr',  // Variable framerate - only output on scene changes
       '-f', 'null',
       '-'
     ], {
@@ -91,9 +96,9 @@ class MotionDetector extends EventEmitter {
 
     this.ffmpegProcess.stderr?.on('data', (data: Buffer) => {
       const output = data.toString();
-      // FFmpeg outputs progress to stderr
-      if (output.includes('scene:')) {
-        this.processSceneChange(output);
+      // scdet filter outputs scene detection info to stderr
+      if (output.includes('lavfi.scd.score=') || output.includes('scd.score')) {
+        this.processScdetOutput(output);
       }
     });
 
@@ -108,13 +113,14 @@ class MotionDetector extends EventEmitter {
       
       // Auto-restart if unexpected exit
       if (code !== 0 && this.config.enabled) {
+        console.log('[Motion] Auto-restarting in 5 seconds...');
         setTimeout(() => this.start(rtspUrl), 5000);
       }
     });
   }
 
   private processOutput(output: string): void {
-    // Parse metadata output for scene detection
+    // Parse metadata output for scene detection (legacy support)
     if (output.includes('lavfi.scene_score')) {
       const match = output.match(/lavfi\.scene_score=(\d+\.?\d*)/);
       if (match) {
@@ -124,7 +130,23 @@ class MotionDetector extends EventEmitter {
     }
   }
 
+  private processScdetOutput(output: string): void {
+    // scdet filter outputs lines like:
+    // [Parsed_scdet_0 @ 0x...] lavfi.scd.mafd=0.123 lavfi.scd.score=0.456 lavfi.scd.time=1.234
+    // The score is 0-1, higher means more scene change
+    const scoreMatch = output.match(/lavfi\.scd\.score=(\d+\.?\d*)/);
+    if (scoreMatch) {
+      const score = parseFloat(scoreMatch[1]);
+      if (this.config.debug || config.debug) {
+        console.log(`[Motion] Scene change detected, score: ${score.toFixed(3)}`);
+      }
+      // scdet only triggers when threshold is exceeded, so any detection is significant
+      this.handleMotionScore(score);
+    }
+  }
+
   private processSceneChange(output: string): void {
+    // Legacy fallback for select filter scene output
     const match = output.match(/scene:(\d+\.?\d*)/);
     if (match) {
       const score = parseFloat(match[1]);
@@ -134,16 +156,19 @@ class MotionDetector extends EventEmitter {
 
   private handleMotionScore(score: number): void {
     const now = Date.now();
-    const threshold = this.config.threshold / 100;
-
-    if (score > threshold) {
+    
+    // scdet filter already applies threshold, so any detection is significant
+    // But we still use threshold for confidence filtering
+    const minScore = this.config.threshold / 100;
+    
+    if (score >= minScore) {
       if (!this.isInMotion) {
         this.motionStartTime = now;
         this.isInMotion = true;
       }
 
-      // Check if motion persists long enough
-      if (now - this.motionStartTime >= this.config.minDurationMs) {
+      // Check if motion persists long enough (or skip if minDurationMs is 0)
+      if (this.config.minDurationMs === 0 || now - this.motionStartTime >= this.config.minDurationMs) {
         // Check cooldown
         if (now - this.lastMotionTime >= this.config.cooldownMs) {
           this.lastMotionTime = now;
