@@ -71,6 +71,7 @@
 - **Capture on detection** - Snapshot + short clip when bird appears
 - **Open source bird ID** - Use BirdNET (free, runs locally, no API costs)
 - **$200 hard cap** - Do not exceed without written approval
+- **NO TURN SERVER** - Explicitly disabled. Use HLS streaming instead of WebRTC to avoid TURN costs
 
 ## Phase 8: Remaining Features 🔄
 - [ ] Camera stream preview (RTSP → HLS transcoding)

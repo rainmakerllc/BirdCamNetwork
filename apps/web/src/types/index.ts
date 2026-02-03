@@ -30,6 +30,16 @@ export interface Camera {
   description?: string;
   youtubeId?: string;
   streamType?: 'rtsp' | 'youtube' | 'hls';
+  streamSettings?: {
+    mode: 'hls' | 'webrtc' | 'auto';
+    gatewayUrl: string;
+    streamPath: string;
+    mlEnabled: boolean;
+    detectionThreshold: number;
+    classificationThreshold: number;
+    showDebugOverlay: boolean;
+    developerMode: boolean;
+  };
   lastSeenAt?: Date;
   createdAt: Date;
   updatedAt: Date;

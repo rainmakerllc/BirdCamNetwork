@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "cameras",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "clips",
       "queryScope": "COLLECTION",
       "fields": [

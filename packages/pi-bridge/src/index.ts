@@ -100,8 +100,71 @@ async function resolveRtspUrl(): Promise<string> {
 }
 
 async function initializePtz(): Promise<void> {
+  const ptzMode = config.ptz.mode;
+  
+  // Amcrest CGI mode can work without ONVIF - just needs camera host/credentials
+  const forceAmcrestCgi = ptzMode === 'amcrest';
+  const hasAmcrestConfig = config.onvif.host && config.onvif.username && config.onvif.password;
+  
+  // Check if we can try Amcrest CGI without ONVIF
+  if (forceAmcrestCgi && hasAmcrestConfig) {
+    console.log('[Main] PTZ: Attempting Amcrest CGI (standalone mode, no ONVIF required)');
+    try {
+      ptzController = createAmcrestPtzController(
+        config.onvif.host,
+        config.onvif.port || 80,
+        config.onvif.username,
+        config.onvif.password,
+        config.ptz.channel
+      );
+      
+      const capabilities = await ptzController.getCapabilities();
+      if (capabilities.supported) {
+        console.log('[Main] PTZ: Enabled via Amcrest CGI (standalone)');
+        setPtzController(ptzController as unknown as PtzController);
+        
+        const presetManager = getPresetManager();
+        presetManager.setPtzController(ptzController);
+        presetManager.initSchedules();
+        console.log('[Main] PTZ: Preset manager initialized');
+        return;
+      }
+    } catch (err) {
+      console.warn('[Main] PTZ: Amcrest CGI standalone failed:', (err as Error).message);
+    }
+  }
+  
+  // Standard ONVIF-based PTZ (requires ONVIF connection)
   if (!config.onvif.enabled || !onvifDevice) {
-    console.log('[Main] PTZ: Not available (ONVIF not enabled)');
+    // Try Amcrest CGI as fallback if we have the config
+    if (hasAmcrestConfig && ptzMode !== 'onvif') {
+      console.log('[Main] PTZ: ONVIF not available, trying Amcrest CGI as fallback');
+      try {
+        ptzController = createAmcrestPtzController(
+          config.onvif.host,
+          config.onvif.port || 80,
+          config.onvif.username,
+          config.onvif.password,
+          config.ptz.channel
+        );
+        
+        const capabilities = await ptzController.getCapabilities();
+        if (capabilities.supported) {
+          console.log('[Main] PTZ: Enabled via Amcrest CGI (fallback)');
+          setPtzController(ptzController as unknown as PtzController);
+          
+          const presetManager = getPresetManager();
+          presetManager.setPtzController(ptzController);
+          presetManager.initSchedules();
+          console.log('[Main] PTZ: Preset manager initialized');
+          return;
+        }
+      } catch (err) {
+        console.warn('[Main] PTZ: Amcrest CGI fallback failed:', (err as Error).message);
+      }
+    }
+    
+    console.log('[Main] PTZ: Not available (ONVIF not connected)');
     return;
   }
 
@@ -113,7 +176,6 @@ async function initializePtz(): Promise<void> {
     }
 
     // Determine which PTZ controller to use
-    const ptzMode = config.ptz.mode;
     const isAmcrest = isAmcrestCamera(onvifDevice.manufacturer, onvifDevice.model);
     
     // Decide: use Amcrest CGI if mode is 'amcrest' OR (mode is 'auto' AND camera is Amcrest)

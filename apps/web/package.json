@@ -18,7 +18,9 @@
     "@solana/web3.js": "^1.98.0",
     "bs58": "^6.0.0",
     "firebase": "^12.8.0",
+    "hls.js": "^1.6.15",
     "next": "16.1.6",
+    "onnxruntime-web": "^1.23.2",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "uuid": "^11.1.0"
