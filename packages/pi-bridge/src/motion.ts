@@ -72,11 +72,13 @@ class MotionDetector extends EventEmitter {
     const sensitivity = this.config.sensitivity / 100;
     const sceneThreshold = 1 - (sensitivity * 0.5); // Map 0-100 to scene detection threshold
 
+    // Note: In Node spawn, we don't need shell quoting. The comma in the filter expression
+    // must be escaped with \ because FFmpeg uses commas as filter separators.
     this.ffmpegProcess = spawn(config.ffmpegPath, [
       '-rtsp_transport', 'tcp',
       '-i', rtspUrl,
-      '-vf', `select='gt(scene,${sceneThreshold})',metadata=print:file=-`,
-      '-vsync', 'vfr',
+      '-vf', `select=gt(scene\\,${sceneThreshold.toFixed(2)}),metadata=print:file=-`,
+      '-fps_mode', 'vfr',  // Use -fps_mode instead of deprecated -vsync
       '-f', 'null',
       '-'
     ], {
