@@ -1036,6 +1036,10 @@ export function getDashboardV2Html(): string {
             <div class="bird-stat-value" id="lifelist-count">0</div>
             <div class="bird-stat-label">Life List</div>
           </div>
+          <div class="bird-stat" id="weather-stat" style="display: none;">
+            <div class="bird-stat-value" id="weather-temp">--</div>
+            <div class="bird-stat-label" id="weather-conditions">Weather</div>
+          </div>
         </div>
       </div>
       
@@ -1257,17 +1261,115 @@ export function getDashboardV2Html(): string {
 
   <!-- Settings Modal -->
   <div class="modal-overlay" id="settings-modal">
-    <div class="modal">
+    <div class="modal" style="max-width: 550px;">
       <div class="modal-header">
         <h3 class="modal-title">⚙️ Settings</h3>
         <button class="modal-close" onclick="closeSettings()">×</button>
       </div>
       <div class="modal-body">
-        <!-- Settings content -->
-        <p class="text-muted">Settings panel coming soon...</p>
+        <!-- Settings Tabs -->
+        <div class="tabs" style="margin-bottom: var(--space-4);">
+          <button class="tab active" onclick="switchSettingsTab('video')" data-settings-tab="video">📹 Video</button>
+          <button class="tab" onclick="switchSettingsTab('notifications')" data-settings-tab="notifications">🔔 Alerts</button>
+          <button class="tab" onclick="switchSettingsTab('detection')" data-settings-tab="detection">🐦 Detection</button>
+        </div>
+        
+        <!-- Video Settings -->
+        <div id="settings-video" class="settings-panel">
+          <div class="form-group">
+            <label class="form-label">Output Resolution</label>
+            <select class="form-select" id="setting-resolution">
+              <option value="source">Source (no scaling)</option>
+              <option value="1080p">1080p</option>
+              <option value="720p">720p</option>
+              <option value="480p">480p</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Quality Preset</label>
+            <select class="form-select" id="setting-quality">
+              <option value="ultrafast">Ultra Fast (low CPU)</option>
+              <option value="veryfast">Very Fast</option>
+              <option value="fast">Fast</option>
+              <option value="medium">Medium (best quality)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Bitrate</label>
+            <select class="form-select" id="setting-bitrate">
+              <option value="1000k">1 Mbps</option>
+              <option value="2000k">2 Mbps</option>
+              <option value="3000k">3 Mbps</option>
+              <option value="4000k">4 Mbps</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+              <input type="checkbox" id="setting-audio" checked style="width: 18px; height: 18px;">
+              <span>Enable Audio</span>
+            </label>
+          </div>
+        </div>
+        
+        <!-- Notification Settings -->
+        <div id="settings-notifications" class="settings-panel" style="display: none;">
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+              <input type="checkbox" id="notify-enabled" checked style="width: 18px; height: 18px;">
+              <span>Enable Notifications</span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+              <input type="checkbox" id="notify-birds" checked style="width: 18px; height: 18px;">
+              <span>Bird Detected</span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+              <input type="checkbox" id="notify-newspecies" checked style="width: 18px; height: 18px;">
+              <span>New Species (first sighting)</span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label style="display: flex; align-items: center; gap: var(--space-2); cursor: pointer;">
+              <input type="checkbox" id="notify-offline" checked style="width: 18px; height: 18px;">
+              <span>Camera Offline</span>
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="form-label">ntfy.sh Topic (optional)</label>
+            <input type="text" class="form-input" id="notify-ntfy" placeholder="my-birdcam">
+            <div class="text-xs text-muted" style="margin-top: 4px;">Free push notifications via ntfy.sh</div>
+          </div>
+          <button class="btn btn-secondary" onclick="testNotification()" style="margin-top: var(--space-2);">
+            🧪 Send Test Notification
+          </button>
+        </div>
+        
+        <!-- Detection Settings -->
+        <div id="settings-detection" class="settings-panel" style="display: none;">
+          <div class="form-group">
+            <label class="form-label">Minimum Confidence</label>
+            <select class="form-select" id="setting-confidence">
+              <option value="0.5">50% (More detections)</option>
+              <option value="0.7" selected>70% (Balanced)</option>
+              <option value="0.85">85% (High accuracy)</option>
+              <option value="0.95">95% (Very high accuracy)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Rare Species (one per line)</label>
+            <textarea class="form-input" id="setting-rarespecies" rows="4" placeholder="Pileated Woodpecker
+Painted Bunting
+Scarlet Tanager"></textarea>
+            <div class="text-xs text-muted" style="margin-top: 4px;">Get special alerts for these species</div>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-primary" onclick="closeSettings()">Close</button>
+        <button class="btn btn-secondary" onclick="closeSettings()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
       </div>
     </div>
   </div>
@@ -1590,13 +1692,102 @@ export function getDashboardV2Html(): string {
       } catch (err) {}
     }
 
+    // ==================== Weather ====================
+    async function refreshWeather() {
+      try {
+        const res = await fetch('/api/weather/current');
+        if (!res.ok) return;
+        
+        const data = await res.json();
+        document.getElementById('weather-stat').style.display = 'block';
+        document.getElementById('weather-temp').textContent = Math.round(data.temperature) + '°';
+        document.getElementById('weather-conditions').textContent = data.conditions;
+      } catch (err) {}
+    }
+
     // ==================== Settings ====================
     function openSettings() {
       document.getElementById('settings-modal').classList.add('active');
+      loadSettings();
     }
     
     function closeSettings() {
       document.getElementById('settings-modal').classList.remove('active');
+    }
+    
+    function switchSettingsTab(tab) {
+      document.querySelectorAll('[data-settings-tab]').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.settings-panel').forEach(p => p.style.display = 'none');
+      document.querySelector(\`[data-settings-tab="\${tab}"]\`).classList.add('active');
+      document.getElementById(\`settings-\${tab}\`).style.display = 'block';
+    }
+    
+    async function loadSettings() {
+      try {
+        // Video settings
+        const videoRes = await fetch('/api/settings/video');
+        const video = await videoRes.json();
+        document.getElementById('setting-resolution').value = video.outputResolution || 'source';
+        document.getElementById('setting-quality').value = video.qualityPreset || 'ultrafast';
+        document.getElementById('setting-bitrate').value = video.outputBitrate || '2000k';
+        document.getElementById('setting-audio').checked = video.audioEnabled !== false;
+        
+        // Notification settings
+        const notifyRes = await fetch('/api/notifications/settings');
+        const notify = await notifyRes.json();
+        document.getElementById('notify-enabled').checked = notify.enabled !== false;
+        document.getElementById('notify-birds').checked = notify.onBirdDetected !== false;
+        document.getElementById('notify-newspecies').checked = notify.onNewSpecies !== false;
+        document.getElementById('notify-offline').checked = notify.onCameraOffline !== false;
+        document.getElementById('notify-ntfy').value = notify.ntfy?.topic || '';
+        document.getElementById('setting-rarespecies').value = (notify.rareSpecies || []).join('\\n');
+      } catch (err) {}
+    }
+    
+    async function saveSettings() {
+      try {
+        // Save video settings
+        await fetch('/api/settings/video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            outputResolution: document.getElementById('setting-resolution').value,
+            qualityPreset: document.getElementById('setting-quality').value,
+            outputBitrate: document.getElementById('setting-bitrate').value,
+            audioEnabled: document.getElementById('setting-audio').checked,
+          })
+        });
+        
+        // Save notification settings
+        const ntfyTopic = document.getElementById('notify-ntfy').value.trim();
+        await fetch('/api/notifications/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enabled: document.getElementById('notify-enabled').checked,
+            onBirdDetected: document.getElementById('notify-birds').checked,
+            onNewSpecies: document.getElementById('notify-newspecies').checked,
+            onCameraOffline: document.getElementById('notify-offline').checked,
+            ntfy: ntfyTopic ? { enabled: true, topic: ntfyTopic } : { enabled: false },
+            rareSpecies: document.getElementById('setting-rarespecies').value.split('\\n').map(s => s.trim()).filter(Boolean),
+          })
+        });
+        
+        closeSettings();
+        alert('✅ Settings saved!');
+      } catch (err) {
+        alert('❌ Failed to save settings');
+      }
+    }
+    
+    async function testNotification() {
+      try {
+        const res = await fetch('/api/notifications/test', { method: 'POST' });
+        const data = await res.json();
+        alert(data.success ? '✅ Test notification sent!' : '❌ Failed to send notification');
+      } catch (err) {
+        alert('❌ Error sending notification');
+      }
     }
 
     // ==================== Initialize ====================
@@ -1620,9 +1811,11 @@ export function getDashboardV2Html(): string {
       refreshBirdStats();
       refreshPresets();
       refreshClips();
+      refreshWeather();
       
       setInterval(updateStatus, 5000);
       setInterval(refreshBirdStats, 30000);
+      setInterval(refreshWeather, 300000); // Update weather every 5 min
     }
     
     init();

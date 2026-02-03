@@ -9,6 +9,8 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
+import { getNotificationManager } from './notifications.js';
+import { getCurrentWeather, type WeatherData } from './weather.js';
 
 export interface BirdSighting {
   id: string;
@@ -102,20 +104,50 @@ export class BirdTracker extends EventEmitter {
   /**
    * Record a new bird sighting
    */
-  recordSighting(sighting: Omit<BirdSighting, 'id'>): BirdSighting {
+  async recordSighting(sighting: Omit<BirdSighting, 'id'>): Promise<BirdSighting> {
+    // Fetch current weather to add context
+    let weather: WeatherData | null = null;
+    try {
+      weather = await getCurrentWeather();
+    } catch (err) {
+      // Weather is optional
+    }
+
     const record: BirdSighting = {
       ...sighting,
       id: `sight_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      weather: weather ? {
+        temperature: weather.temperature,
+        conditions: weather.conditions,
+        windSpeed: weather.windSpeed,
+      } : undefined,
     };
 
     // Add to sightings
     this.state.sightings.push(record);
 
-    // Update life list if new species
-    if (!this.state.lifeList.includes(sighting.species)) {
+    // Check if new species
+    const isNew = !this.state.lifeList.includes(sighting.species);
+    if (isNew) {
       this.state.lifeList.push(sighting.species);
       this.emit('newSpecies', record);
       console.log(`[BirdTracker] 🎉 New species added to life list: ${sighting.species}`);
+    }
+
+    // Check if rare species
+    const notificationManager = getNotificationManager();
+    const isRare = notificationManager.isRareSpecies(sighting.species);
+
+    // Send notification
+    try {
+      await notificationManager.notifyBirdDetected(
+        sighting.species,
+        sighting.confidence,
+        isNew,
+        isRare
+      );
+    } catch (err) {
+      // Notification failure shouldn't block recording
     }
 
     // Trim old sightings if needed

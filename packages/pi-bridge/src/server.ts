@@ -24,6 +24,8 @@ import { initAuth, authMiddleware, isAuthConfigured, getApiKey } from './auth.js
 import { getPresetManager } from './ptz-presets.js';
 import { getBirdTracker } from './bird-tracker.js';
 import { getDashboardV2Html } from './dashboard-v2.js';
+import { getNotificationManager } from './notifications.js';
+import { getCurrentWeather, getForecast, getBirdActivityRating, getWeatherSummary } from './weather.js';
 
 const app = express();
 
@@ -783,6 +785,60 @@ app.get('/api/birds/export', (req, res) => {
   const tracker = getBirdTracker();
   res.json(tracker.exportData());
 });
+
+// ==================== Notifications ====================
+
+// Get notification settings
+app.get('/api/notifications/settings', (req, res) => {
+  const manager = getNotificationManager();
+  res.json(manager.getSettings());
+});
+
+// Update notification settings
+app.post('/api/notifications/settings', (req, res) => {
+  const manager = getNotificationManager();
+  const settings = manager.updateSettings(req.body);
+  res.json({ success: true, settings });
+});
+
+// Test notification
+app.post('/api/notifications/test', asyncHandler(async (req, res) => {
+  const manager = getNotificationManager();
+  const success = await manager.send({
+    type: 'custom',
+    title: '🧪 Test Notification',
+    message: 'This is a test notification from BirdCam!',
+    priority: 'normal',
+  });
+  res.json({ success });
+}));
+
+// ==================== Weather ====================
+
+// Get current weather
+app.get('/api/weather/current', asyncHandler(async (req, res) => {
+  const weather = await getCurrentWeather();
+  if (!weather) {
+    res.status(503).json({ error: 'Weather data unavailable', hint: 'Check location config' });
+    return;
+  }
+  
+  const rating = getBirdActivityRating(weather);
+  const summary = getWeatherSummary(weather);
+  
+  res.json({
+    ...weather,
+    summary,
+    birdActivityRating: rating,
+  });
+}));
+
+// Get weather forecast
+app.get('/api/weather/forecast', asyncHandler(async (req, res) => {
+  const days = parseInt(req.query.days as string) || 7;
+  const forecast = await getForecast(days);
+  res.json({ forecast });
+}));
 
 // ==================== Web Dashboard ====================
 

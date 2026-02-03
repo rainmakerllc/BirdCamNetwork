@@ -191,7 +191,7 @@ async function initializeBirdDetection(rtspUrl: string): Promise<void> {
       const snapshot = await recorder.captureSnapshot(`bird-${detection.species}`);
 
       // Record sighting
-      const sighting = birdTracker.recordSighting({
+      const sighting = await birdTracker.recordSighting({
         species: detection.species,
         scientificName: detection.scientificName,
         confidence: detection.confidence,
