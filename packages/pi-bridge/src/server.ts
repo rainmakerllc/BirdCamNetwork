@@ -1290,11 +1290,107 @@ function getDashboardHtml(): string {
         </div>
         
         <div class="card">
+          <h2>🐦 Bird Activity</h2>
+          <div class="stats" id="bird-stats">
+            <div class="stat">
+              <span class="stat-label">Today's Sightings</span>
+              <span class="stat-value" id="bird-today">-</span>
+            </div>
+            <div class="stat">
+              <span class="stat-label">Species Today</span>
+              <span class="stat-value" id="bird-species-today">-</span>
+            </div>
+            <div class="stat">
+              <span class="stat-label">Life List</span>
+              <span class="stat-value good" id="bird-lifelist">-</span>
+            </div>
+            <div class="stat">
+              <span class="stat-label">Most Active</span>
+              <span class="stat-value" id="bird-top">-</span>
+            </div>
+          </div>
+          <div id="recent-birds" style="margin-top: 12px; max-height: 150px; overflow-y: auto;">
+            <p style="color: var(--muted); text-align: center; font-size: 0.85rem;">No sightings yet</p>
+          </div>
+          <div style="margin-top: 12px; text-align: center;">
+            <button class="btn btn-sm btn-secondary" onclick="openBirdModal()">📊 View Details</button>
+          </div>
+        </div>
+        
+        <div class="card">
+          <h2>📍 Saved Positions</h2>
+          <div id="saved-presets" style="max-height: 200px; overflow-y: auto;">
+            <p style="color: var(--muted); text-align: center; font-size: 0.85rem;">No presets saved</p>
+          </div>
+          <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn btn-sm btn-primary" onclick="saveCurrentPosition()">💾 Save Position</button>
+            <button class="btn btn-sm btn-secondary" id="patrol-btn" onclick="togglePatrol()">🔄 Patrol</button>
+          </div>
+        </div>
+        
+        <div class="card">
           <h2>🎬 Recent Clips</h2>
           <div class="clips-list" id="clips-list">
             <p style="color: var(--muted); text-align: center; padding: 20px;">Loading...</p>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Bird Details Modal -->
+  <div class="modal-overlay" id="bird-modal" onclick="if(event.target===this)closeBirdModal()">
+    <div class="modal" style="max-width: 600px;">
+      <div class="modal-header">
+        <h3>🐦 Bird Activity</h3>
+        <button class="modal-close" onclick="closeBirdModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-section">
+          <h4>📋 Life List (<span id="lifelist-count">0</span> species)</h4>
+          <div id="lifelist-content" style="max-height: 200px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 6px;">
+          </div>
+        </div>
+        
+        <div class="settings-section">
+          <h4>🏆 Top Species</h4>
+          <div id="top-species" style="display: grid; gap: 4px;">
+          </div>
+        </div>
+        
+        <div class="settings-section">
+          <h4>📅 Recent Sightings</h4>
+          <div id="all-sightings" style="max-height: 250px; overflow-y: auto;">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="exportBirdData()">📥 Export Data</button>
+        <button class="btn btn-primary" onclick="closeBirdModal()">Close</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Save Preset Modal -->
+  <div class="modal-overlay" id="preset-modal" onclick="if(event.target===this)closePresetModal()">
+    <div class="modal" style="max-width: 400px;">
+      <div class="modal-header">
+        <h3>💾 Save Camera Position</h3>
+        <button class="modal-close" onclick="closePresetModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Preset Name</label>
+          <input type="text" class="form-input" id="preset-name" placeholder="e.g., Bird Feeder">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description (optional)</label>
+          <input type="text" class="form-input" id="preset-desc" placeholder="e.g., Best angle for the feeder">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closePresetModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="confirmSavePreset()">Save</button>
       </div>
     </div>
   </div>
@@ -2008,6 +2104,213 @@ function getDashboardHtml(): string {
       }
     }
     
+    // ==================== Bird Tracking ====================
+    
+    let patrolActive = false;
+    
+    async function refreshBirdStats() {
+      try {
+        const res = await fetch('/api/birds/summary');
+        const data = await res.json();
+        
+        document.getElementById('bird-today').textContent = data.todaySightings || '0';
+        document.getElementById('bird-species-today').textContent = data.todaySpecies || '0';
+        document.getElementById('bird-lifelist').textContent = data.totalSpecies || '0';
+        document.getElementById('bird-top').textContent = data.topToday || '-';
+        
+        // Recent sightings
+        const recentEl = document.getElementById('recent-birds');
+        if (data.recentSightings && data.recentSightings.length > 0) {
+          recentEl.innerHTML = data.recentSightings.slice(0, 5).map(s => \`
+            <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 0.85rem;">
+              <span>🐦 \${s.species}</span>
+              <span style="color: var(--muted);">\${(s.confidence * 100).toFixed(0)}%</span>
+            </div>
+          \`).join('');
+        } else {
+          recentEl.innerHTML = '<p style="color: var(--muted); text-align: center; font-size: 0.85rem;">No sightings yet</p>';
+        }
+      } catch (err) {
+        console.error('Bird stats failed:', err);
+      }
+    }
+    
+    function openBirdModal() {
+      document.getElementById('bird-modal').classList.add('active');
+      loadBirdDetails();
+    }
+    
+    function closeBirdModal() {
+      document.getElementById('bird-modal').classList.remove('active');
+    }
+    
+    async function loadBirdDetails() {
+      try {
+        // Life list
+        const lifeRes = await fetch('/api/birds/lifelist');
+        const lifeData = await lifeRes.json();
+        document.getElementById('lifelist-count').textContent = lifeData.count;
+        document.getElementById('lifelist-content').innerHTML = lifeData.species.map(s => 
+          \`<span style="background: var(--border); padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">\${s}</span>\`
+        ).join('');
+        
+        // Top species
+        const topRes = await fetch('/api/birds/top?limit=5');
+        const topData = await topRes.json();
+        document.getElementById('top-species').innerHTML = topData.species.map((s, i) => \`
+          <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border);">
+            <span>\${i + 1}. \${s.species}</span>
+            <span style="color: var(--accent); font-weight: 500;">\${s.count}</span>
+          </div>
+        \`).join('');
+        
+        // Recent sightings
+        const sightRes = await fetch('/api/birds/sightings?limit=20');
+        const sightData = await sightRes.json();
+        document.getElementById('all-sightings').innerHTML = sightData.sightings.map(s => \`
+          <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 0.85rem;">
+            <div>
+              <div>🐦 \${s.species}</div>
+              <div style="color: var(--muted); font-size: 0.75rem;">\${new Date(s.timestamp).toLocaleString()}</div>
+            </div>
+            <span style="color: var(--accent);">\${(s.confidence * 100).toFixed(0)}%</span>
+          </div>
+        \`).join('');
+      } catch (err) {
+        console.error('Bird details failed:', err);
+      }
+    }
+    
+    async function exportBirdData() {
+      try {
+        const res = await fetch('/api/birds/export');
+        const data = await res.json();
+        
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = \`birdcam-data-\${new Date().toISOString().split('T')[0]}.json\`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Export failed: ' + err.message);
+      }
+    }
+    
+    // ==================== Preset Management ====================
+    
+    async function refreshPresets() {
+      try {
+        const res = await fetch('/api/presets');
+        const data = await res.json();
+        
+        patrolActive = data.patrolActive;
+        updatePatrolButton();
+        
+        const container = document.getElementById('saved-presets');
+        if (!data.presets || data.presets.length === 0) {
+          container.innerHTML = '<p style="color: var(--muted); text-align: center; font-size: 0.85rem;">No presets saved</p>';
+          return;
+        }
+        
+        container.innerHTML = data.presets.map(p => \`
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; margin-bottom: 6px; background: rgba(255,255,255,0.05); border-radius: 6px;">
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-weight: 500;">\${p.name}</div>
+              \${p.description ? \`<div style="font-size: 0.75rem; color: var(--muted);">\${p.description}</div>\` : ''}
+            </div>
+            <div style="display: flex; gap: 4px;">
+              <button class="btn btn-sm btn-primary" onclick="gotoPreset('\${p.id}')">Go</button>
+              <button class="btn btn-sm btn-danger" onclick="deletePreset('\${p.id}')">×</button>
+            </div>
+          </div>
+        \`).join('');
+      } catch (err) {
+        console.error('Presets failed:', err);
+      }
+    }
+    
+    function saveCurrentPosition() {
+      document.getElementById('preset-modal').classList.add('active');
+      document.getElementById('preset-name').value = '';
+      document.getElementById('preset-desc').value = '';
+    }
+    
+    function closePresetModal() {
+      document.getElementById('preset-modal').classList.remove('active');
+    }
+    
+    async function confirmSavePreset() {
+      const name = document.getElementById('preset-name').value.trim();
+      if (!name) {
+        alert('Please enter a preset name');
+        return;
+      }
+      
+      try {
+        const res = await fetch('/api/presets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            createFromCurrent: true,
+            name,
+            description: document.getElementById('preset-desc').value.trim(),
+          }),
+        });
+        
+        const data = await res.json();
+        if (data.success) {
+          closePresetModal();
+          refreshPresets();
+          alert('✅ Position saved!');
+        } else {
+          alert('Failed to save preset');
+        }
+      } catch (err) {
+        alert('Save failed: ' + err.message);
+      }
+    }
+    
+    async function gotoPreset(id) {
+      try {
+        await fetch(\`/api/presets/\${id}/goto\`, { method: 'POST' });
+      } catch (err) {
+        alert('Go to preset failed');
+      }
+    }
+    
+    async function deletePreset(id) {
+      if (!confirm('Delete this preset?')) return;
+      
+      try {
+        await fetch(\`/api/presets/\${id}\`, { method: 'DELETE' });
+        refreshPresets();
+      } catch (err) {
+        alert('Delete failed');
+      }
+    }
+    
+    async function togglePatrol() {
+      try {
+        if (patrolActive) {
+          await fetch('/api/patrol/stop', { method: 'POST' });
+        } else {
+          await fetch('/api/patrol/start', { method: 'POST' });
+        }
+        patrolActive = !patrolActive;
+        updatePatrolButton();
+      } catch (err) {
+        alert('Patrol toggle failed');
+      }
+    }
+    
+    function updatePatrolButton() {
+      const btn = document.getElementById('patrol-btn');
+      btn.textContent = patrolActive ? '⏹️ Stop Patrol' : '🔄 Patrol';
+      btn.className = patrolActive ? 'btn btn-sm btn-danger' : 'btn btn-sm btn-secondary';
+    }
+    
     // ==================== Initialize ====================
     
     async function initPlayer() {
@@ -2035,10 +2338,13 @@ function getDashboardHtml(): string {
     refreshClips();
     loadPTZStatus();
     checkTimeSync();
+    refreshBirdStats();
+    refreshPresets();
     
     // Periodic updates
     setInterval(updateStatus, 5000);
     setInterval(checkTimeSync, 60000);
+    setInterval(refreshBirdStats, 30000);  // Update bird stats every 30s
   </script>
 </body>
 </html>`;
