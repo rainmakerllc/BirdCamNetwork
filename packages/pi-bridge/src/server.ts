@@ -23,6 +23,7 @@ import { getSettings, RESOLUTION_PRESETS, type VideoSettings } from './settings.
 import { initAuth, authMiddleware, isAuthConfigured, getApiKey } from './auth.js';
 import { getPresetManager } from './ptz-presets.js';
 import { getBirdTracker } from './bird-tracker.js';
+import { getDashboardV2Html } from './dashboard-v2.js';
 
 const app = express();
 
@@ -785,7 +786,13 @@ app.get('/api/birds/export', (req, res) => {
 
 // ==================== Web Dashboard ====================
 
+// New redesigned dashboard (v2)
 app.get('/', (req, res) => {
+  res.send(getDashboardV2Html());
+});
+
+// Legacy dashboard (v1) - accessible at /v1
+app.get('/v1', (req, res) => {
   res.send(getDashboardHtml());
 });
 
