@@ -73,16 +73,39 @@
 - **$200 hard cap** - Do not exceed without written approval
 - **NO TURN SERVER** - Explicitly disabled. Use HLS streaming instead of WebRTC to avoid TURN costs
 
-## Phase 8: Remaining Features 🔄
-- [ ] Camera stream preview (RTSP → HLS transcoding)
-- [ ] Bird detection integration (BirdNET/custom model)
-- [ ] Clip recording when bird detected
-- [ ] Species classification display
-- [ ] Individual bird tracking
+## Phase 8: Browser ML Detection ✅
+- [x] Stream player (HLS + WebRTC support)
+- [x] Stream settings panel (gateway URL, mode, thresholds)
+- [x] Bird detector (YOLOv5n ONNX model, 4MB)
+- [x] Species classifier (MobileNetV2 ONNX, 14MB, ~60 bird species)
+- [x] Detection pipeline (frame capture → inference → tracking)
+- [x] Tracker for deduplication (IoU-based)
+- [x] Video overlay (bounding boxes + labels)
+- [x] Developer overlay (debug info)
+- [x] Detection hook for React integration
+- [x] Local model caching (/public/models/)
+- [x] Sightings saved to Firestore + Storage
+- [x] Camera page shows realtime sighting list
+
+## Phase 9: Clip Recording & Improvements ✅
+- [x] Browser-side clip recording (MediaRecorder API)
+- [x] Clip upload to Firebase Storage + metadata to Firestore
+- [x] Pre-buffer + post-buffer recording around sighting events
+- [x] Clip recording status indicators (REC badge, clip count)
+- [x] Improved species label names (friendly ImageNet bird classes)
+- [x] Bird emoji mapping for species display
+- [x] Realtime SightingsActivity component for dashboard
+- [x] Fix pi-bridge STREAM_MODE default from 'webrtc' → 'hls'
+- [x] Pi instructions doc for Bruce (PI_INSTRUCTIONS.md)
+
+## Phase 10: Remaining Features 🔄
+- [ ] Individual bird tracking ("Name this bird")
 - [ ] NFT minting (Solana integration)
 - [ ] Community leaderboard
+- [ ] Push notifications
+- [ ] Fine-tuned bird species model (current uses ImageNet classes)
 
-## Phase 9: Backend Services (Future)
+## Phase 10: Backend Services (Future)
 - [ ] Camera stream ingestion worker
 - [ ] Bird detection ML pipeline
 - [ ] Species classification model
@@ -91,5 +114,5 @@
 - [ ] Push notifications
 
 ---
-Last updated: 2026-02-02
-Status: MVP DEPLOYED 🎉
+Last updated: 2026-02-05
+Status: MVP DEPLOYED 🎉 | Clip Recording + ML Improvements Added

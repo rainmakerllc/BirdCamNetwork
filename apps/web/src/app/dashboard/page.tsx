@@ -5,10 +5,11 @@ import { useCameras } from '@/hooks/useCameras';
 import { useClips } from '@/hooks/useClips';
 import { useSightings } from '@/hooks/useSightings';
 import { useIndividuals } from '@/hooks/useIndividuals';
+import { SightingsActivity } from '@/components/stream/SightingsActivity';
 import Link from 'next/link';
 
 export default function DashboardPage() {
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
   const { cameras, loading: camerasLoading } = useCameras();
   const { clips, todayCount: clipsToday } = useClips();
   const { sightings, speciesCount, todayCount: sightingsToday } = useSightings();
@@ -67,35 +68,18 @@ export default function DashboardPage() {
       )}
 
       <div className="grid lg:grid-cols-2 gap-6">
-        {/* Recent Sightings */}
-        <div className="bg-white rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold">Recent Sightings</h2>
-            <Link href="/dashboard/birds" className="text-sm text-emerald-600">View all</Link>
-          </div>
-          {sightings.length === 0 ? (
+        {/* Bird Activity (realtime) */}
+        {user ? (
+          <SightingsActivity userId={user.uid} maxItems={15} />
+        ) : (
+          <div className="bg-white rounded-xl p-6">
+            <h2 className="font-semibold mb-4">🐦 Bird Activity</h2>
             <div className="text-center py-8 text-gray-400">
               <div className="text-4xl mb-2">🔍</div>
-              <p className="text-sm">No sightings yet</p>
+              <p className="text-sm">Sign in to see sightings</p>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {sightings.slice(0, 5).map((s) => (
-                <div key={s.id} className="flex items-center gap-3 py-2 border-b last:border-0">
-                  <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
-                    🐦
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">{s.speciesFinalId || 'Unknown species'}</p>
-                    <p className="text-xs text-gray-500">
-                      {s.detectedAt?.toLocaleString?.() || 'Just now'}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Active Cameras */}
         <div className="bg-white rounded-xl p-6">

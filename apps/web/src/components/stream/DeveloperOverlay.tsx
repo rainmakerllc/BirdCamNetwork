@@ -5,13 +5,17 @@ import { useEffect, useRef, useState } from 'react';
 interface DeveloperOverlayProps {
   videoElement: HTMLVideoElement | null;
   isActive: boolean;
-  modelStatus: 'idle' | 'loading' | 'running' | 'error';
+  modelStatus: 'idle' | 'loading' | 'running' | 'error' | 'ready';
   inferenceData?: {
-    inputTensorShape: number[];
-    outputTensorShape: number[];
-    preprocessMs: number;
-    inferenceMs: number;
-    postprocessMs: number;
+    fps?: number;
+    inferenceMs?: number;
+    detectionCount?: number;
+    trackCount?: number;
+    engine?: string;
+    inputTensorShape?: number[];
+    outputTensorShape?: number[];
+    preprocessMs?: number;
+    postprocessMs?: number;
     detectorOutput?: number[];
     classifierOutput?: { label: string; score: number }[];
     rawBoxes?: Array<{ x: number; y: number; w: number; h: number; conf: number }>;
@@ -126,24 +130,65 @@ export function DeveloperOverlay({
         )}
       </div>
 
-      {/* Timing Stats */}
-      <div className="mb-3 p-2 bg-gray-800 rounded">
-        <div className="text-gray-400 mb-1">Pipeline Timing</div>
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div>
-            <div className="text-green-400">{inferenceData?.preprocessMs?.toFixed(1) || '—'}ms</div>
-            <div className="text-gray-500 text-[10px]">Preprocess</div>
-          </div>
-          <div>
-            <div className="text-yellow-400">{inferenceData?.inferenceMs?.toFixed(1) || '—'}ms</div>
-            <div className="text-gray-500 text-[10px]">Inference</div>
-          </div>
-          <div>
-            <div className="text-blue-400">{inferenceData?.postprocessMs?.toFixed(1) || '—'}ms</div>
-            <div className="text-gray-500 text-[10px]">Postprocess</div>
+      {/* Quick Stats */}
+      {inferenceData && (
+        <div className="mb-3 p-2 bg-gray-800 rounded">
+          <div className="text-gray-400 mb-1">Live Stats</div>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            {inferenceData.fps !== undefined && (
+              <div>
+                <span className="text-gray-500">FPS:</span>{' '}
+                <span className="text-green-400">{inferenceData.fps}</span>
+              </div>
+            )}
+            {inferenceData.inferenceMs !== undefined && (
+              <div>
+                <span className="text-gray-500">Inference:</span>{' '}
+                <span className="text-yellow-400">{inferenceData.inferenceMs}ms</span>
+              </div>
+            )}
+            {inferenceData.detectionCount !== undefined && (
+              <div>
+                <span className="text-gray-500">Detections:</span>{' '}
+                <span className="text-cyan-400">{inferenceData.detectionCount}</span>
+              </div>
+            )}
+            {inferenceData.trackCount !== undefined && (
+              <div>
+                <span className="text-gray-500">Tracks:</span>{' '}
+                <span className="text-purple-400">{inferenceData.trackCount}</span>
+              </div>
+            )}
+            {inferenceData.engine && (
+              <div className="col-span-2">
+                <span className="text-gray-500">Engine:</span>{' '}
+                <span className="text-emerald-400">{inferenceData.engine}</span>
+              </div>
+            )}
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Detailed Timing Stats */}
+      {(inferenceData?.preprocessMs !== undefined || inferenceData?.postprocessMs !== undefined) && (
+        <div className="mb-3 p-2 bg-gray-800 rounded">
+          <div className="text-gray-400 mb-1">Pipeline Timing</div>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div>
+              <div className="text-green-400">{inferenceData?.preprocessMs?.toFixed(1) || '—'}ms</div>
+              <div className="text-gray-500 text-[10px]">Preprocess</div>
+            </div>
+            <div>
+              <div className="text-yellow-400">{inferenceData?.inferenceMs?.toFixed(1) || '—'}ms</div>
+              <div className="text-gray-500 text-[10px]">Inference</div>
+            </div>
+            <div>
+              <div className="text-blue-400">{inferenceData?.postprocessMs?.toFixed(1) || '—'}ms</div>
+              <div className="text-gray-500 text-[10px]">Postprocess</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tensor Shapes */}
       <div className="mb-3 p-2 bg-gray-800 rounded">

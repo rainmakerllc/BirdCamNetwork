@@ -7,3 +7,4 @@ export type { StreamConfig } from './StreamSettings';
 export { LiveCameraView } from './LiveCameraView';
 export type { SightingData } from './LiveCameraView';
 export { DeveloperOverlay } from './DeveloperOverlay';
+export { SightingsActivity } from './SightingsActivity';

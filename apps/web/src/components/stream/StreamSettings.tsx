@@ -7,6 +7,7 @@ export interface StreamConfig {
   mode: StreamMode;
   gatewayUrl: string;
   streamPath: string;
+  apiKey?: string;  // For authenticated streams (pi-bridge)
   mlEnabled: boolean;
   detectionThreshold: number;
   classificationThreshold: number;
@@ -22,8 +23,9 @@ interface StreamSettingsProps {
 
 const DEFAULT_CONFIG: StreamConfig = {
   mode: 'hls',
-  gatewayUrl: 'http://localhost:8888',
-  streamPath: 'cam1',
+  gatewayUrl: '',
+  streamPath: '',
+  apiKey: '',
   mlEnabled: true,  // ML enabled by default
   detectionThreshold: 0.35,
   classificationThreshold: 0.55,
@@ -55,8 +57,28 @@ export function StreamSettings({ config: initialConfig, onSave, className = '' }
     }
   };
 
-  const getHlsUrl = () => `${config.gatewayUrl}/${config.streamPath}/index.m3u8`;
-  const getWebrtcUrl = () => `${config.gatewayUrl.replace(':8888', ':8889')}/${config.streamPath}/whep`;
+  const isGo2rtc = config.gatewayUrl?.includes(':1984') || config.gatewayUrl?.includes('go2rtc');
+  const streamName = config.streamPath || 'birdcam';
+  
+  const getHlsUrl = () => {
+    if (!config.gatewayUrl) return 'Not configured';
+    if (config.gatewayUrl.endsWith('.m3u8')) return config.gatewayUrl;
+    if (isGo2rtc) {
+      const base = config.gatewayUrl.replace(/\/$/, '');
+      return `${base}/api/stream.m3u8?src=${streamName}`;
+    }
+    return config.streamPath 
+      ? `${config.gatewayUrl}/${config.streamPath}/index.m3u8`
+      : `${config.gatewayUrl}/stream.m3u8`;
+  };
+  const getWebrtcUrl = () => {
+    if (!config.gatewayUrl) return 'Not configured';
+    if (isGo2rtc) {
+      const base = config.gatewayUrl.replace(/\/$/, '');
+      return `${base}/api/webrtc?src=${streamName}`;
+    }
+    return `${config.gatewayUrl.replace(':8080', ':1984')}/api/webrtc?src=birdcam`;
+  };
 
   return (
     <div className={`bg-white rounded-xl p-6 ${className}`}>
@@ -98,9 +120,12 @@ export function StreamSettings({ config: initialConfig, onSave, className = '' }
           type="text"
           value={config.gatewayUrl}
           onChange={(e) => setConfig({ ...config, gatewayUrl: e.target.value })}
-          placeholder="http://192.168.1.100:8888"
+          placeholder="http://192.168.1.100:8080"
           className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-sm"
         />
+        <p className="text-xs text-gray-500 mt-1">
+          go2rtc: http://hostname:1984 • Pi-bridge: http://hostname:8080 • MediaMTX: http://hostname:8888
+        </p>
       </div>
 
       {/* Stream Path */}
@@ -112,11 +137,29 @@ export function StreamSettings({ config: initialConfig, onSave, className = '' }
           type="text"
           value={config.streamPath}
           onChange={(e) => setConfig({ ...config, streamPath: e.target.value })}
-          placeholder="cam1"
+          placeholder="cam1 (leave empty for pi-bridge)"
           className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-sm"
         />
         <p className="text-xs text-gray-500 mt-1">
-          HLS: {getHlsUrl()}
+          HLS: {getHlsUrl()}<br/>
+          WebRTC: {getWebrtcUrl()}
+        </p>
+      </div>
+
+      {/* API Key (optional) */}
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          API Key (optional)
+        </label>
+        <input
+          type="password"
+          value={config.apiKey || ''}
+          onChange={(e) => setConfig({ ...config, apiKey: e.target.value })}
+          placeholder="For authenticated streams"
+          className="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-sm"
+        />
+        <p className="text-xs text-gray-500 mt-1">
+          Pi-bridge requires API key for stream access
         </p>
       </div>
 

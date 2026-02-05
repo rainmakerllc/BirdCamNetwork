@@ -5,7 +5,8 @@ import { useRef, useEffect, useCallback } from 'react';
 export interface Detection {
   id: string;
   bbox: { x: number; y: number; w: number; h: number }; // normalized 0-1
-  species: string;
+  label?: string;   // Display label (species name or "Bird")
+  species?: string; // Alias for label
   confidence: number;
 }
 
@@ -83,7 +84,8 @@ export function VideoOverlay({
       ctx.strokeRect(x, y, w, h);
 
       // Label background
-      const label = `${det.species} ${Math.round(det.confidence * 100)}%`;
+      const displayLabel = det.label || det.species || 'Detection';
+      const label = `${displayLabel} ${Math.round(det.confidence * 100)}%`;
       ctx.font = '14px sans-serif';
       const textMetrics = ctx.measureText(label);
       const labelHeight = 20;

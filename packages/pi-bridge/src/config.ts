@@ -79,7 +79,7 @@ export const config = {
   
   // Streaming
   streaming: {
-    mode: (process.env.STREAM_MODE || 'webrtc') as 'webrtc' | 'hls' | 'auto',
+    mode: (process.env.STREAM_MODE || 'hls') as 'webrtc' | 'hls' | 'auto',
   },
   
   // HLS Stream

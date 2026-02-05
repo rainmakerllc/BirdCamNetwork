@@ -37,3 +37,10 @@ segment*.ts
 
 # Test coverage
 coverage/
+
+# ML models (large binary files - download via scripts/download-models.sh)
+apps/web/public/models/*.onnx
+
+# Build artifacts
+apps/web/.next/
+apps/web/out/

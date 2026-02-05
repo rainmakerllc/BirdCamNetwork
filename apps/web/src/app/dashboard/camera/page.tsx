@@ -4,8 +4,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState, Suspense, useCallback } from 'react';
 import { getCamera, updateCamera, deleteCamera } from '@/lib/services/cameras';
-import { Camera } from '@/types';
-import { LiveCameraView, StreamSettings, StreamConfig, DEFAULT_CONFIG } from '@/components/stream';
+import { saveBrowserSighting, subscribeToCameraSightings } from '@/lib/services/sightings';
+import { Camera, Sighting } from '@/types';
+import { LiveCameraView, StreamSettings, StreamConfig, DEFAULT_CONFIG, SightingData } from '@/components/stream';
+import { getBirdEmoji } from '@/lib/ml/classifier';
 
 function CameraDetailContent() {
   const { user, loading: authLoading } = useAuth();
@@ -20,6 +22,8 @@ function CameraDetailContent() {
   const [formData, setFormData] = useState({ name: '', locationLabel: '' });
   const [saving, setSaving] = useState(false);
   const [streamConfig, setStreamConfig] = useState<StreamConfig>(DEFAULT_CONFIG);
+  const [recentSightings, setRecentSightings] = useState<Sighting[]>([]);
+  const [sightingCount, setSightingCount] = useState(0);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -33,6 +37,38 @@ function CameraDetailContent() {
       router.push('/dashboard/cameras');
     }
   }, [user, authLoading, cameraId]);
+
+  // Subscribe to realtime sightings
+  useEffect(() => {
+    if (!cameraId) return;
+    
+    const unsubscribe = subscribeToCameraSightings(cameraId, (sightings) => {
+      setRecentSightings(sightings);
+      setSightingCount(sightings.length);
+    }, 10);
+    
+    return unsubscribe;
+  }, [cameraId]);
+
+  // Handle ML sighting detection
+  const handleSighting = useCallback(async (sighting: SightingData) => {
+    if (!camera || !user) return;
+    
+    try {
+      await saveBrowserSighting({
+        cameraId: camera.id,
+        userId: user.uid,
+        species: sighting.species,
+        confidence: sighting.confidence,
+        bbox: sighting.bbox,
+        snapshot: sighting.snapshot,
+        trackId: `browser_${Date.now()}`,
+        trackDuration: 0,
+      });
+    } catch (e) {
+      console.error('Failed to save sighting:', e);
+    }
+  }, [camera, user]);
 
   async function loadCamera() {
     if (!cameraId) return;
@@ -111,7 +147,8 @@ function CameraDetailContent() {
 
   // Check if this is a YouTube camera (demo) or real RTSP
   const isYouTubeCamera = camera.youtubeId || camera.rtspUrl?.startsWith('youtube://');
-  const hasStreamConfig = streamConfig.gatewayUrl && streamConfig.streamPath;
+  // For pi-bridge style, only gatewayUrl is needed (streamPath is optional)
+  const hasStreamConfig = !!streamConfig.gatewayUrl;
 
   return (
     <div className="p-8 max-w-6xl">
@@ -136,6 +173,9 @@ function CameraDetailContent() {
             ) : hasStreamConfig ? (
               <LiveCameraView
                 config={streamConfig}
+                cameraId={camera.id}
+                userId={user?.uid}
+                onSighting={handleSighting}
                 className="aspect-video"
               />
             ) : (
@@ -191,15 +231,23 @@ function CameraDetailContent() {
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div className="bg-gray-50 p-4 rounded-lg text-center">
-                <div className="text-2xl font-bold">0</div>
-                <div className="text-sm text-gray-500">Clips</div>
+                <div className="text-2xl font-bold">{sightingCount}</div>
+                <div className="text-sm text-gray-500">Sightings</div>
               </div>
               <div className="bg-gray-50 p-4 rounded-lg text-center">
-                <div className="text-2xl font-bold">0</div>
+                <div className="text-2xl font-bold">
+                  {recentSightings.filter(s => {
+                    const today = new Date();
+                    today.setHours(0,0,0,0);
+                    return s.detectedAt >= today;
+                  }).length}
+                </div>
                 <div className="text-sm text-gray-500">Today</div>
               </div>
               <div className="bg-gray-50 p-4 rounded-lg text-center">
-                <div className="text-2xl font-bold">0</div>
+                <div className="text-2xl font-bold">
+                  {new Set(recentSightings.map(s => s.speciesFinalId)).size}
+                </div>
                 <div className="text-sm text-gray-500">Species</div>
               </div>
               <div className="bg-gray-50 p-4 rounded-lg text-center">
@@ -245,11 +293,44 @@ function CameraDetailContent() {
           {/* Recent Sightings */}
           <div className="bg-white rounded-xl p-6">
             <h2 className="font-semibold mb-4">Recent Sightings</h2>
-            <div className="text-center py-8 text-gray-400">
-              <div className="text-3xl mb-2">🐦</div>
-              <p className="text-sm">No sightings yet</p>
-              <p className="text-xs mt-1">Enable ML detection to start tracking birds</p>
-            </div>
+            {recentSightings.length === 0 ? (
+              <div className="text-center py-8 text-gray-400">
+                <div className="text-3xl mb-2">🐦</div>
+                <p className="text-sm">No sightings yet</p>
+                <p className="text-xs mt-1">Enable ML detection to start tracking birds</p>
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-80 overflow-y-auto">
+                {recentSightings.map((sighting) => (
+                  <div key={sighting.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    {sighting.keyframePath ? (
+                      <img 
+                        src={sighting.keyframePath} 
+                        alt={sighting.speciesFinalId || 'Bird'} 
+                        className="w-16 h-16 object-cover rounded"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 bg-gray-200 rounded flex items-center justify-center text-2xl">
+                        {getBirdEmoji(sighting.speciesFinalId || 'bird')}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-gray-900 truncate">
+                        {sighting.speciesFinalId?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Unknown Bird'}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {sighting.speciesFinalConfidence 
+                          ? `${Math.round((sighting.speciesFinalConfidence || 0) * 100)}% confidence`
+                          : ''}
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {sighting.detectedAt?.toLocaleString() || 'Unknown time'}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
