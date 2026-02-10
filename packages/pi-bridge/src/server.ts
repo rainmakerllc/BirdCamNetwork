@@ -189,6 +189,56 @@ app.get('/segment:num.ts', (req, res) => {
   createReadStream(filePath).pipe(res);
 });
 
+// Simple test page for debugging video playback
+app.get('/test', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <title>Stream Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body style="background:#000;margin:0;padding:20px;">
+  <h1 style="color:#fff;">HLS Stream Test</h1>
+  <video id="video" controls autoplay muted playsinline style="width:100%;max-width:800px;background:#333;border:2px solid #fff;"></video>
+  <pre id="log" style="color:#0f0;background:#111;padding:10px;margin-top:20px;max-height:300px;overflow:auto;"></pre>
+  <script>
+    const video = document.getElementById("video");
+    const log = document.getElementById("log");
+    function addLog(msg) { log.textContent += new Date().toISOString().slice(11,19) + " " + msg + "\\n"; console.log(msg); log.scrollTop = log.scrollHeight; }
+    
+    const hlsUrl = "/stream.m3u8";
+    addLog("Loading: " + hlsUrl);
+    
+    if (Hls.isSupported()) {
+      addLog("HLS.js supported - version " + Hls.version);
+      const hls = new Hls({debug: false, enableWorker: true});
+      hls.loadSource(hlsUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, (e, data) => { 
+        addLog("Manifest loaded! Levels: " + data.levels.length); 
+        video.play().then(() => addLog("Playing!")).catch(e => addLog("Play error: " + e.message));
+      });
+      hls.on(Hls.Events.FRAG_LOADED, (e, data) => addLog("Fragment loaded: " + data.frag.sn));
+      hls.on(Hls.Events.ERROR, (e, data) => {
+        addLog("ERROR: " + data.type + " - " + data.details + (data.fatal ? " (FATAL)" : ""));
+        if (data.response) addLog("  Response: " + data.response.code);
+      });
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      addLog("Using native HLS (Safari)");
+      video.src = hlsUrl;
+      video.play().catch(e => addLog("Play error: " + e.message));
+    } else {
+      addLog("HLS NOT SUPPORTED in this browser!");
+    }
+    
+    video.addEventListener("playing", () => addLog("Video playing event"));
+    video.addEventListener("waiting", () => addLog("Video waiting..."));
+    video.addEventListener("error", (e) => addLog("Video error: " + (video.error?.message || "unknown")));
+  </script>
+</body>
+</html>`);
+});
+
 // ==================== WebRTC ====================
 
 // WebRTC status
