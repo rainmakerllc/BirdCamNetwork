@@ -168,8 +168,9 @@ export function initAuth(): AuthConfig {
     password: password || '',
     apiKey: apiKey,
     realm: process.env.AUTH_REALM || 'BirdCam',
-    // Exclude health checks and HLS segments from auth (segments are fetched by HLS.js without auth headers)
-    excludePaths: ['/health', '/api/health', '/segment'],
+    // Exclude health checks, HLS segments, test page, and stream from Basic Auth prompt
+    // API key is still checked for sensitive endpoints
+    excludePaths: ['/health', '/api/health', '/segment', '/test', '/stream'],
   };
   
   if (authConfig.enabled && !authConfig.password) {
@@ -281,11 +282,15 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     return next();
   }
   
-  // Request authentication
-  res.setHeader('WWW-Authenticate', `Basic realm="${authConfig.realm}"`);
+  // Request authentication - only show Basic Auth prompt if no API key was attempted
+  // (to avoid browser popup when using API key in URL)
+  const attemptedApiKey = req.headers['x-api-key'] || req.query.api_key;
+  if (!attemptedApiKey) {
+    res.setHeader('WWW-Authenticate', `Basic realm="${authConfig.realm}"`);
+  }
   res.status(401).json({ 
     error: 'Authentication required',
-    hint: 'Use Basic Auth or X-API-Key header'
+    hint: attemptedApiKey ? 'Invalid API key' : 'Use ?api_key=YOUR_KEY or X-API-Key header'
   });
 }
 
