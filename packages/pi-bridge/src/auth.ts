@@ -168,7 +168,8 @@ export function initAuth(): AuthConfig {
     password: password || '',
     apiKey: apiKey,
     realm: process.env.AUTH_REALM || 'BirdCam',
-    excludePaths: ['/health', '/api/health'],
+    // Exclude health checks and HLS segments from auth (segments are fetched by HLS.js without auth headers)
+    excludePaths: ['/health', '/api/health', '/segment'],
   };
   
   if (authConfig.enabled && !authConfig.password) {
@@ -270,8 +271,8 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     return next();
   }
   
-  // Skip excluded paths
-  if (authConfig.excludePaths.some(path => req.path === path || req.path.startsWith(path + '/'))) {
+  // Skip excluded paths (exact match or prefix match)
+  if (authConfig.excludePaths.some(path => req.path === path || req.path.startsWith(path))) {
     return next();
   }
   
