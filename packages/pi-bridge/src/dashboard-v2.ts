@@ -1502,19 +1502,34 @@ Scarlet Tanager"></textarea>
     
     function startHLS() {
       // Get API key from URL to include in HLS requests
-      const urlParams = new URLSearchParams(window.location.search);
-      const apiKey = urlParams.get('api_key') || '';
-      const hlsUrl = '/stream.m3u8' + (apiKey ? '?api_key=' + apiKey : '');
+      const hlsUrl = '/stream.m3u8' + (API_KEY ? '?api_key=' + API_KEY : '');
+      console.log('[HLS] Starting with URL:', hlsUrl);
       
       if (Hls.isSupported()) {
-        hlsPlayer = new Hls({ liveSyncDuration: 3 });
+        console.log('[HLS] Using hls.js');
+        hlsPlayer = new Hls({ liveSyncDuration: 3, debug: false });
         hlsPlayer.loadSource(hlsUrl);
         hlsPlayer.attachMedia(video);
+        
+        hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
+          console.log('[HLS] Manifest loaded, starting playback');
+          video.play().catch(e => console.error('[HLS] Autoplay failed:', e));
+        });
+        
         hlsPlayer.on(Hls.Events.ERROR, (event, data) => {
-          console.error('[HLS] Error:', data.type, data.details);
+          console.error('[HLS] Error:', data.type, data.details, data.fatal);
+          if (data.fatal) {
+            console.error('[HLS] Fatal error, attempting recovery...');
+            hlsPlayer.destroy();
+            setTimeout(startHLS, 3000);
+          }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        console.log('[HLS] Using native HLS (Safari)');
         video.src = hlsUrl;
+        video.play().catch(e => console.error('[HLS] Autoplay failed:', e));
+      } else {
+        console.error('[HLS] HLS not supported in this browser');
       }
       currentMode = 'hls';
       updateModeDisplay();
@@ -1989,17 +2004,19 @@ Scarlet Tanager"></textarea>
     async function init() {
       initPTZ();
       
-      // Try WebRTC first
+      // Start with HLS for reliability, WebRTC can be enabled via toggle
+      // WebRTC often fails due to network/firewall issues
+      console.log('[Video] Starting HLS stream...');
+      startHLS();
+      
+      // Check if WebRTC is available for optional upgrade
       try {
         const res = await apiFetch('/api/webrtc/status');
         const data = await res.json();
-        if (data.available) {
-          await startWebRTC();
-        } else {
-          startHLS();
-        }
+        webrtcAvailable = data.available;
+        console.log('[Video] WebRTC available:', webrtcAvailable);
       } catch (err) {
-        startHLS();
+        console.log('[Video] WebRTC check failed:', err);
       }
       
       updateStatus();
