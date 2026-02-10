@@ -29,7 +29,7 @@ import { getCurrentWeather, getForecast, getBirdActivityRating, getWeatherSummar
 
 const app = express();
 
-// Security middleware
+// Security middleware - configured for local HTTP access
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -39,9 +39,13 @@ app.use(helmet({
       imgSrc: ["'self'", "data:", "blob:"],
       mediaSrc: ["'self'", "blob:"],
       connectSrc: ["'self'", "ws:", "wss:"],
+      // Don't upgrade to HTTPS - we're running on local HTTP
+      upgradeInsecureRequests: null,
     },
   },
   crossOriginEmbedderPolicy: false,  // Allow embedding video
+  // Disable HSTS since we're HTTP only
+  hsts: false,
 }));
 
 // Rate limiting - prevent brute force
