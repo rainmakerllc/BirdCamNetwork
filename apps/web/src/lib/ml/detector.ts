@@ -12,6 +12,71 @@ import { BBox } from './tracker';
 // COCO class index for "bird"
 const BIRD_CLASS_ID = 14;
 
+/**
+ * Convert Float16 (Uint16Array) to Float32Array
+ * IEEE 754 half-precision decoding
+ */
+function float16ToFloat32(float16: Uint16Array): Float32Array {
+  const float32 = new Float32Array(float16.length);
+  for (let i = 0; i < float16.length; i++) {
+    const h = float16[i];
+    const sign = (h >> 15) & 0x1;
+    const exponent = (h >> 10) & 0x1f;
+    const mantissa = h & 0x3ff;
+
+    let f: number;
+    if (exponent === 0) {
+      // Subnormal or zero
+      f = (sign ? -1 : 1) * Math.pow(2, -14) * (mantissa / 1024);
+    } else if (exponent === 31) {
+      // Infinity or NaN
+      f = mantissa === 0 ? (sign ? -Infinity : Infinity) : NaN;
+    } else {
+      // Normalized
+      f = (sign ? -1 : 1) * Math.pow(2, exponent - 15) * (1 + mantissa / 1024);
+    }
+    float32[i] = f;
+  }
+  return float32;
+}
+
+/**
+ * Convert Float32Array to Float16 (stored as Uint16Array)
+ * IEEE 754 half-precision encoding
+ */
+function float32ToFloat16(float32: Float32Array): Uint16Array {
+  const float16 = new Uint16Array(float32.length);
+  const f32 = new Float32Array(1);
+  const i32 = new Int32Array(f32.buffer);
+  
+  for (let i = 0; i < float32.length; i++) {
+    f32[0] = float32[i];
+    const x = i32[0];
+    
+    let bits = (x >> 16) & 0x8000; // sign
+    const e = (x >> 23) & 0xff;     // exponent
+    const m = (x >> 12) & 0x07ff;   // mantissa
+    
+    if (e >= 143) {
+      // Overflow → Inf (or NaN)
+      bits |= 0x7c00;
+      bits |= (e === 255 ? 0 : 1) && (x & 0x007fffff);
+    } else if (e >= 113) {
+      // Normal range
+      bits |= ((e - 112) << 10) | (m >> 1);
+      bits += m & 1; // round to nearest even
+    } else if (e >= 103) {
+      // Subnormal
+      const shifted = m | 0x0800;
+      bits |= (shifted >> (114 - e)) + ((shifted >> (113 - e)) & 1);
+    }
+    // else: too small → stays 0 (with sign)
+    
+    float16[i] = bits;
+  }
+  return float16;
+}
+
 // Model configuration
 // YOLOv5n default input size is 640, but we can use smaller for speed
 const INPUT_SIZE = 640;
@@ -29,6 +94,8 @@ export class BirdDetector {
   private session: ort.InferenceSession | null = null;
   private inputName: string = '';
   private outputName: string = '';
+  private inputType: 'float32' | 'float16' = 'float32';
+  private _loggedOutput = false;
 
   async load(modelUrl: string, onProgress?: (p: number) => void): Promise<void> {
     try {
@@ -76,11 +143,48 @@ export class BirdDetector {
       this.inputName = this.session.inputNames[0];
       this.outputName = this.session.outputNames[0];
 
+      // Detect expected input type with a small test inference
+      await this.detectInputType();
+
       console.log('[BirdDetector] Model loaded successfully');
-      console.log('[BirdDetector] Input:', this.inputName, 'Output:', this.outputName);
+      console.log('[BirdDetector] Input:', this.inputName, 'Output:', this.outputName, 'Type:', this.inputType);
     } catch (error) {
       console.error('[BirdDetector] Failed to load model:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Detect whether model expects float32 or float16 input
+   */
+  private async detectInputType(): Promise<void> {
+    if (!this.session) return;
+    
+    const testSize = 3 * INPUT_SIZE * INPUT_SIZE;
+    const testData = new Float32Array(testSize); // zeros
+
+    try {
+      const tensor = new ort.Tensor('float32', testData, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+      await this.session.run({ [this.inputName]: tensor });
+      this.inputType = 'float32';
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('float16')) {
+        this.inputType = 'float16';
+        console.log('[BirdDetector] Model requires float16 input, will convert');
+        // Verify float16 works
+        try {
+          const fp16Data = float32ToFloat16(testData);
+          const tensor = new ort.Tensor('float16', fp16Data, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+          await this.session.run({ [this.inputName]: tensor });
+        } catch (e2) {
+          console.warn('[BirdDetector] float16 test also failed:', e2);
+          this.inputType = 'float32'; // fallback
+        }
+      } else {
+        // Some other error during test inference - assume float32
+        console.warn('[BirdDetector] Type detection error (assuming float32):', msg);
+      }
     }
   }
 
@@ -157,16 +261,41 @@ export class BirdDetector {
     // Preprocess
     const inputTensor = this.preprocess(imageData, canvas, ctx);
 
-    // Create ONNX tensor
-    const tensor = new ort.Tensor('float32', inputTensor, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+    // Create ONNX tensor with correct type
+    let tensor: ort.Tensor;
+    if (this.inputType === 'float16') {
+      const fp16Data = float32ToFloat16(inputTensor);
+      tensor = new ort.Tensor('float16', fp16Data, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+    } else {
+      tensor = new ort.Tensor('float32', inputTensor, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+    }
 
     // Run inference
     const results = await this.session.run({ [this.inputName]: tensor });
     const output = results[this.outputName];
 
+    // Download data from GPU to CPU (WebGPU keeps tensors on GPU; .data returns zeros)
+    const rawData = await output.getData();
+
+    // Convert output data to Float32Array (model may output float16)
+    let outputData: Float32Array;
+    if (output.type === 'float16') {
+      outputData = float16ToFloat32(rawData as Uint16Array);
+    } else {
+      outputData = rawData as Float32Array;
+    }
+
+    // One-time debug: log output stats
+    if (!this._loggedOutput) {
+      this._loggedOutput = true;
+      const max = Math.max(...Array.from(outputData.slice(0, 1000)));
+      const min = Math.min(...Array.from(outputData.slice(0, 1000)));
+      console.log(`[BirdDetector] Output type=${output.type} dims=${JSON.stringify(output.dims)} range=[${min.toFixed(4)}, ${max.toFixed(4)}] len=${outputData.length}`);
+    }
+
     // Parse YOLO output
     const detections = this.parseYoloOutput(
-      output.data as Float32Array,
+      outputData,
       output.dims as number[],
       imageData.width,
       imageData.height,

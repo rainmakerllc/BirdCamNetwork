@@ -1439,6 +1439,20 @@ Scarlet Tanager"></textarea>
     let webrtcAvailable = false;
     let ptzAvailable = false;
     let patrolActive = false;
+    
+    // Get API key from URL for authenticated requests
+    const urlParams = new URLSearchParams(window.location.search);
+    const API_KEY = urlParams.get('api_key') || '';
+    
+    // Helper to add API key to URL
+    function apiUrl(path) {
+      return path + (path.includes('?') ? '&' : '?') + 'api_key=' + API_KEY;
+    }
+    
+    // Helper for authenticated fetch
+    async function apiFetch(path, options = {}) {
+      return fetch(apiUrl(path), options);
+    }
 
     // ==================== WebRTC ====================
     async function startWebRTC() {
@@ -1463,13 +1477,13 @@ Scarlet Tanager"></textarea>
         
         await new Promise(r => setTimeout(r, 2000));
         
-        const res = await fetch('/api/webrtc/offer', {
+        const res = await apiFetch('/api/webrtc/offer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(peerConnection.localDescription)
         });
         
-        if (!res.ok) throw new Error('WebRTC failed');
+        if (!res.ok) throw new Error('WebRTC failed: ' + res.status);
         await peerConnection.setRemoteDescription(await res.json());
         
         currentMode = 'webrtc';
@@ -1487,12 +1501,20 @@ Scarlet Tanager"></textarea>
     }
     
     function startHLS() {
+      // Get API key from URL to include in HLS requests
+      const urlParams = new URLSearchParams(window.location.search);
+      const apiKey = urlParams.get('api_key') || '';
+      const hlsUrl = '/stream.m3u8' + (apiKey ? '?api_key=' + apiKey : '');
+      
       if (Hls.isSupported()) {
         hlsPlayer = new Hls({ liveSyncDuration: 3 });
-        hlsPlayer.loadSource('/stream.m3u8');
+        hlsPlayer.loadSource(hlsUrl);
         hlsPlayer.attachMedia(video);
+        hlsPlayer.on(Hls.Events.ERROR, (event, data) => {
+          console.error('[HLS] Error:', data.type, data.details);
+        });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = '/stream.m3u8';
+        video.src = hlsUrl;
       }
       currentMode = 'hls';
       updateModeDisplay();
@@ -1523,7 +1545,7 @@ Scarlet Tanager"></textarea>
     }
     
     async function ptzMove(pan, tilt, zoom) {
-      await fetch('/api/ptz/move', {
+      await apiFetch('/api/ptz/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pan, tilt, zoom, type: 'continuous' })
@@ -1531,11 +1553,11 @@ Scarlet Tanager"></textarea>
     }
     
     async function ptzStop() {
-      await fetch('/api/ptz/stop', { method: 'POST' });
+      await apiFetch('/api/ptz/stop', { method: 'POST' });
     }
     
     async function ptzHome() {
-      await fetch('/api/ptz/home', { method: 'POST' });
+      await apiFetch('/api/ptz/home', { method: 'POST' });
     }
     
     async function runPtzTest() {
@@ -1547,7 +1569,7 @@ Scarlet Tanager"></textarea>
       testBtn.style.opacity = '0.7';
       
       try {
-        const res = await fetch('/api/ptz/test', { 
+        const res = await apiFetch('/api/ptz/test', { 
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ duration: 1500 })
@@ -1589,12 +1611,12 @@ Scarlet Tanager"></textarea>
 
     // ==================== Recording & Snapshots ====================
     async function takeSnapshot() {
-      const res = await fetch('/api/snapshot', { method: 'POST' });
+      const res = await apiFetch('/api/snapshot', { method: 'POST' });
       if ((await res.json()).success) alert('📸 Snapshot saved!');
     }
     
     async function toggleRecording() {
-      await fetch(isRecording ? '/api/recording/stop' : '/api/recording/start', { method: 'POST' });
+      await apiFetch(isRecording ? '/api/recording/stop' : '/api/recording/start', { method: 'POST' });
       isRecording = !isRecording;
       document.getElementById('record-btn').classList.toggle('recording', isRecording);
     }
@@ -1624,7 +1646,7 @@ Scarlet Tanager"></textarea>
     // ==================== Bird Activity ====================
     async function refreshBirdStats() {
       try {
-        const res = await fetch('/api/birds/summary');
+        const res = await apiFetch('/api/birds/summary');
         const data = await res.json();
         
         document.getElementById('today-count').textContent = data.todaySightings || 0;
@@ -1699,7 +1721,7 @@ Scarlet Tanager"></textarea>
     }
     
     async function exportBirdData() {
-      const res = await fetch('/api/birds/export');
+      const res = await apiFetch('/api/birds/export');
       const data = await res.json();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const a = document.createElement('a');
@@ -1711,7 +1733,7 @@ Scarlet Tanager"></textarea>
     // ==================== Presets ====================
     async function refreshPresets() {
       try {
-        const res = await fetch('/api/presets');
+        const res = await apiFetch('/api/presets');
         const data = await res.json();
         
         patrolActive = data.patrolActive;
@@ -1736,7 +1758,7 @@ Scarlet Tanager"></textarea>
       const name = document.getElementById('preset-name').value.trim();
       if (!name) return alert('Enter a name');
       
-      await fetch('/api/presets', {
+      await apiFetch('/api/presets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ createFromCurrent: true, name, description: document.getElementById('preset-desc').value })
@@ -1751,7 +1773,7 @@ Scarlet Tanager"></textarea>
     }
     
     async function togglePatrol() {
-      await fetch(patrolActive ? '/api/patrol/stop' : '/api/patrol/start', { method: 'POST' });
+      await apiFetch(patrolActive ? '/api/patrol/stop' : '/api/patrol/start', { method: 'POST' });
       patrolActive = !patrolActive;
       document.getElementById('patrol-btn').textContent = patrolActive ? '⏹️ Stop Patrol' : '🔄 Start Patrol';
     }
@@ -1759,7 +1781,7 @@ Scarlet Tanager"></textarea>
     // ==================== Status ====================
     async function updateStatus() {
       try {
-        const res = await fetch('/health');
+        const res = await apiFetch('/health');
         const data = await res.json();
         
         document.getElementById('stream-info').textContent = \`\${data.streamStats?.fps || '--'} fps | \${data.streamStats?.bitrate || '--'}\`;
@@ -1778,7 +1800,7 @@ Scarlet Tanager"></textarea>
     
     async function refreshClips() {
       try {
-        const res = await fetch('/api/clips');
+        const res = await apiFetch('/api/clips');
         const data = await res.json();
         
         const list = document.getElementById('clips-list');
@@ -1799,7 +1821,7 @@ Scarlet Tanager"></textarea>
     // ==================== Weather ====================
     async function refreshWeather() {
       try {
-        const res = await fetch('/api/weather/current');
+        const res = await apiFetch('/api/weather/current');
         if (!res.ok) return;
         
         const data = await res.json();
@@ -1833,7 +1855,7 @@ Scarlet Tanager"></textarea>
     async function loadSettings() {
       try {
         // Video settings
-        const videoRes = await fetch('/api/settings/video');
+        const videoRes = await apiFetch('/api/settings/video');
         const video = await videoRes.json();
         document.getElementById('setting-resolution').value = video.outputResolution || 'source';
         document.getElementById('setting-quality').value = video.qualityPreset || 'ultrafast';
@@ -1841,7 +1863,7 @@ Scarlet Tanager"></textarea>
         document.getElementById('setting-audio').checked = video.audioEnabled !== false;
         
         // Notification settings
-        const notifyRes = await fetch('/api/notifications/settings');
+        const notifyRes = await apiFetch('/api/notifications/settings');
         const notify = await notifyRes.json();
         document.getElementById('notify-enabled').checked = notify.enabled !== false;
         document.getElementById('notify-birds').checked = notify.onBirdDetected !== false;
@@ -1857,7 +1879,7 @@ Scarlet Tanager"></textarea>
     
     async function loadApiKeySettings() {
       try {
-        const res = await fetch('/api/auth/key');
+        const res = await apiFetch('/api/auth/key');
         const data = await res.json();
         document.getElementById('current-api-key').value = data.apiKey || '';
         
@@ -1896,7 +1918,7 @@ Scarlet Tanager"></textarea>
       }
       
       try {
-        const res = await fetch('/api/auth/regenerate', { method: 'POST' });
+        const res = await apiFetch('/api/auth/regenerate', { method: 'POST' });
         const data = await res.json();
         
         if (data.success) {
@@ -1920,7 +1942,7 @@ Scarlet Tanager"></textarea>
     async function saveSettings() {
       try {
         // Save video settings
-        await fetch('/api/settings/video', {
+        await apiFetch('/api/settings/video', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1933,7 +1955,7 @@ Scarlet Tanager"></textarea>
         
         // Save notification settings
         const ntfyTopic = document.getElementById('notify-ntfy').value.trim();
-        await fetch('/api/notifications/settings', {
+        await apiFetch('/api/notifications/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1955,7 +1977,7 @@ Scarlet Tanager"></textarea>
     
     async function testNotification() {
       try {
-        const res = await fetch('/api/notifications/test', { method: 'POST' });
+        const res = await apiFetch('/api/notifications/test', { method: 'POST' });
         const data = await res.json();
         alert(data.success ? '✅ Test notification sent!' : '❌ Failed to send notification');
       } catch (err) {
@@ -1969,7 +1991,7 @@ Scarlet Tanager"></textarea>
       
       // Try WebRTC first
       try {
-        const res = await fetch('/api/webrtc/status');
+        const res = await apiFetch('/api/webrtc/status');
         const data = await res.json();
         if (data.available) {
           await startWebRTC();

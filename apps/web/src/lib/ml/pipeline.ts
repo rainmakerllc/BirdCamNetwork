@@ -80,6 +80,7 @@ export class DetectionPipeline {
   private ctx: CanvasRenderingContext2D;
   
   private running = false;
+  private inferenceRunning = false;
   private frameId: number | null = null;
   private lastInferenceTime = 0;
   private inferenceMs = 0;
@@ -243,8 +244,11 @@ export class DetectionPipeline {
     const elapsed = now - this.lastInferenceTime;
     const targetInterval = 1000 / this.config.targetFps;
 
-    if (elapsed >= targetInterval) {
-      this.runInference().catch(console.error);
+    if (elapsed >= targetInterval && !this.inferenceRunning) {
+      this.inferenceRunning = true;
+      this.runInference()
+        .catch(console.error)
+        .finally(() => { this.inferenceRunning = false; });
       this.lastInferenceTime = now;
     }
 

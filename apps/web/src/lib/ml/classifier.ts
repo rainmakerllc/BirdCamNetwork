@@ -118,10 +118,43 @@ export interface ClassifierResult {
   isBird: boolean;
 }
 
+/**
+ * Convert Float32Array to Float16 (stored as Uint16Array)
+ */
+function float32ToFloat16(float32: Float32Array): Uint16Array {
+  const float16 = new Uint16Array(float32.length);
+  const f32 = new Float32Array(1);
+  const i32 = new Int32Array(f32.buffer);
+  
+  for (let i = 0; i < float32.length; i++) {
+    f32[0] = float32[i];
+    const x = i32[0];
+    
+    let bits = (x >> 16) & 0x8000;
+    const e = (x >> 23) & 0xff;
+    const m = (x >> 12) & 0x07ff;
+    
+    if (e >= 143) {
+      bits |= 0x7c00;
+      bits |= (e === 255 ? 0 : 1) && (x & 0x007fffff);
+    } else if (e >= 113) {
+      bits |= ((e - 112) << 10) | (m >> 1);
+      bits += m & 1;
+    } else if (e >= 103) {
+      const shifted = m | 0x0800;
+      bits |= (shifted >> (114 - e)) + ((shifted >> (113 - e)) & 1);
+    }
+    
+    float16[i] = bits;
+  }
+  return float16;
+}
+
 export class BirdClassifier {
   private session: ort.InferenceSession | null = null;
   private inputName: string = '';
   private outputName: string = '';
+  private inputType: 'float32' | 'float16' = 'float32';
   private allLabels: string[] = [];
 
   async load(
@@ -189,7 +222,10 @@ export class BirdClassifier {
       this.inputName = this.session.inputNames[0];
       this.outputName = this.session.outputNames[0];
 
-      console.log('[BirdClassifier] Model loaded, input:', this.inputName);
+      // Detect input type
+      await this.detectInputType();
+
+      console.log('[BirdClassifier] Model loaded, input:', this.inputName, 'type:', this.inputType);
     } catch (error) {
       console.error('[BirdClassifier] Failed to load:', error);
       throw error;
@@ -198,6 +234,28 @@ export class BirdClassifier {
 
   isLoaded(): boolean {
     return this.session !== null;
+  }
+
+  /**
+   * Detect whether model expects float32 or float16 input
+   */
+  private async detectInputType(): Promise<void> {
+    if (!this.session) return;
+    
+    const testSize = 3 * INPUT_SIZE * INPUT_SIZE;
+    const testData = new Float32Array(testSize);
+
+    try {
+      const tensor = new ort.Tensor('float32', testData, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+      await this.session.run({ [this.inputName]: tensor });
+      this.inputType = 'float32';
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('float16')) {
+        this.inputType = 'float16';
+        console.log('[BirdClassifier] Model requires float16 input');
+      }
+    }
   }
 
   /**
@@ -218,10 +276,18 @@ export class BirdClassifier {
     // Preprocess for MobileNetV2
     const inputTensor = this.preprocess(cropped);
 
-    // Run inference
-    const tensor = new ort.Tensor('float32', inputTensor, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+    // Run inference with correct type
+    let tensor: ort.Tensor;
+    if (this.inputType === 'float16') {
+      const fp16Data = float32ToFloat16(inputTensor);
+      tensor = new ort.Tensor('float16', fp16Data, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+    } else {
+      tensor = new ort.Tensor('float32', inputTensor, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+    }
     const results = await this.session.run({ [this.inputName]: tensor });
-    const output = results[this.outputName].data as Float32Array;
+    // Download data from GPU to CPU (WebGPU keeps tensors on GPU; .data returns zeros)
+    const rawOutput = await results[this.outputName].getData();
+    const output = rawOutput as Float32Array;
 
     // Get top-K predictions, prioritizing bird classes
     return this.getTopKBirds(output, topK);
